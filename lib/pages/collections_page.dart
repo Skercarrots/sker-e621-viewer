@@ -5,6 +5,7 @@ import '../providers/auth_provider.dart';
 import '../providers/follows_provider.dart';
 import '../services/e621_collections_api.dart';
 import '../widgets/collection_card.dart';
+import 'settings_page.dart';
 
 class CollectionsPage extends StatefulWidget {
   const CollectionsPage({super.key});
@@ -40,6 +41,16 @@ class _CollectionsPageState extends State<CollectionsPage>
           'Pools & Sets',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsPage()),
+            ),
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Theme.of(context).colorScheme.primary,

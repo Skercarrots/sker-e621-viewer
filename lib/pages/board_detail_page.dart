@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/board_model.dart';
 import '../providers/boards_provider.dart';
+import '../providers/ref_boards_provider.dart';
 import 'details_page.dart';
+import 'ref_canvas_page.dart';
 
 class BoardDetailPage extends StatelessWidget {
   final String boardId;
@@ -107,16 +109,49 @@ class BoardDetailPage extends StatelessWidget {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.draw, color: Colors.cyanAccent),
+            tooltip: 'Open as Reference Canvas',
+            onPressed: () async {
+              final refProvider = Provider.of<RefBoardsProvider>(context, listen: false);
+              final refBoard = await refProvider.createFromSavedBoard(board);
+              if (context.mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: refBoard.id)),
+                );
+              }
+            },
+          ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
-            onSelected: (value) {
-              if (value == 'rename') {
+            onSelected: (value) async {
+              if (value == 'open_ref') {
+                final refProvider = Provider.of<RefBoardsProvider>(context, listen: false);
+                final refBoard = await refProvider.createFromSavedBoard(board);
+                if (context.mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: refBoard.id)),
+                  );
+                }
+              } else if (value == 'rename') {
                 _showRenameDialog(context, boardsProvider, board);
               } else if (value == 'delete') {
                 _showDeleteDialog(context, boardsProvider, board);
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'open_ref',
+                child: Row(
+                  children: [
+                    Icon(Icons.draw, color: Colors.cyanAccent, size: 20),
+                    SizedBox(width: 8),
+                    Text('Open as Ref Canvas'),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: 'rename',
                 child: Row(

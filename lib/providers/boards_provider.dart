@@ -7,10 +7,10 @@ import '../models/post_model.dart';
 
 class BoardsProvider with ChangeNotifier {
   final FlutterSecureStorage _storage;
+  static const String _localStorageKey = 'boards_local';
   List<Board> _boards = [];
   bool _isLoading = false;
   bool _isInitialized = false;
-  String _currentStorageKey = 'boards_guest';
 
   BoardsProvider({FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
@@ -18,7 +18,7 @@ class BoardsProvider with ChangeNotifier {
   List<Board> get boards => List.unmodifiable(_boards);
   bool get isLoading => _isLoading;
   bool get isInitialized => _isInitialized;
-  String get currentStorageKey => _currentStorageKey;
+  String get currentStorageKey => _localStorageKey;
 
   void _safeNotify() {
     try {
@@ -34,26 +34,61 @@ class BoardsProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Updates the storage namespace for the current user or guest mode.
+  /// Ensures boards are loaded. Since boards are local, they persist across guest and user sessions.
   Future<void> updateForUser(String? username, {bool isGuest = false}) async {
-    final newKey = (username != null && username.isNotEmpty && !isGuest)
-        ? 'boards_user_$username'
-        : 'boards_guest';
-
-    if (_currentStorageKey != newKey || !_isInitialized) {
-      _currentStorageKey = newKey;
+    if (!_isInitialized) {
       _isInitialized = true;
       await loadBoards();
     }
+
+    // If logging into an existing user account, merge any legacy user boards if present
+    if (username != null && username.isNotEmpty && !isGuest) {
+      try {
+        final legacyUserData = await _storage.read(key: 'boards_user_$username');
+        if (legacyUserData != null && legacyUserData.isNotEmpty) {
+          final List<dynamic> decoded = jsonDecode(legacyUserData);
+          final userBoards = decoded
+              .whereType<Map<String, dynamic>>()
+              .map((e) => Board.fromJson(e))
+              .toList();
+
+          bool hasChanges = false;
+          final existingIds = _boards.map((b) => b.id).toSet();
+          for (final ub in userBoards) {
+            if (!existingIds.contains(ub.id)) {
+              _boards.add(ub);
+              hasChanges = true;
+            }
+          }
+          if (hasChanges) {
+            _boards.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            await _persistBoards();
+            notifyListeners();
+          }
+        }
+      } catch (e) {
+        debugPrint('Error merging legacy user boards: $e');
+      }
+    }
   }
 
-  /// Loads boards from secure storage
+  /// Loads boards from local secure storage
   Future<void> loadBoards() async {
     _isLoading = true;
     _safeNotify();
 
     try {
-      final String? data = await _storage.read(key: _currentStorageKey);
+      String? data = await _storage.read(key: _localStorageKey);
+
+      // Migration fallback: if boards_local is empty, import from legacy guest storage
+      if (data == null || data.isEmpty) {
+        final guestData = await _storage.read(key: 'boards_guest');
+        if (guestData != null && guestData.isNotEmpty) {
+          data = guestData;
+          await _storage.write(key: _localStorageKey, value: data);
+        }
+      }
+
       if (data != null && data.isNotEmpty) {
         final List<dynamic> decoded = jsonDecode(data);
         _boards = decoded
@@ -74,11 +109,11 @@ class BoardsProvider with ChangeNotifier {
     }
   }
 
-  /// Saves boards to secure storage
+  /// Saves boards to local secure storage
   Future<void> _persistBoards() async {
     try {
       final String encoded = jsonEncode(_boards.map((b) => b.toJson()).toList());
-      await _storage.write(key: _currentStorageKey, value: encoded);
+      await _storage.write(key: _localStorageKey, value: encoded);
     } catch (e) {
       debugPrint('Error persisting boards: $e');
     }

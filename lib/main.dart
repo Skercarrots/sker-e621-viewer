@@ -3,6 +3,8 @@ import 'package:provider/provider.dart'; // Import Provider
 import 'providers/auth_provider.dart'; // Import the AuthProvider
 import 'providers/boards_provider.dart'; // Import the BoardsProvider
 import 'providers/follows_provider.dart'; // Import the FollowsProvider
+import 'providers/ref_boards_provider.dart'; // Import the RefBoardsProvider
+import 'providers/blacklist_provider.dart';
 import 'main_navigator.dart'; // We will create this shortly
 
 void main() {
@@ -15,9 +17,12 @@ class SkerE621App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Provide AuthProvider, BoardsProvider and FollowsProvider
+    // Provide AuthProvider, BoardsProvider, FollowsProvider, RefBoardsProvider, and BlacklistProvider
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider<BlacklistProvider>(
+          create: (context) => BlacklistProvider()..loadSettings(),
+        ),
         ChangeNotifierProvider<AuthProvider>(
           create: (context) => AuthProvider()..tryAutoLogin(),
         ),
@@ -37,6 +42,14 @@ class SkerE621App extends StatelessWidget {
             return f;
           },
         ),
+        ChangeNotifierProxyProvider<AuthProvider, RefBoardsProvider>(
+          create: (context) => RefBoardsProvider(),
+          update: (context, auth, refBoards) {
+            final rb = refBoards ?? RefBoardsProvider();
+            rb.updateForUser(auth.user?.name, isGuest: auth.isGuestMode);
+            return rb;
+          },
+        ),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -44,7 +57,7 @@ class SkerE621App extends StatelessWidget {
         theme: ThemeData(
           brightness: Brightness.dark,
           useMaterial3: true,
-          // Add a color scheme to help with Instagram look
+          // Clean modern dark theme color scheme
           colorScheme: ColorScheme.dark(
              primary: Colors.blueAccent,
              secondary: Colors.blueGrey[700]!,

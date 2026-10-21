@@ -5,6 +5,7 @@ import 'package:skerdev_e621/models/post_model.dart';
 import 'package:skerdev_e621/pages/details_page.dart';
 import 'package:skerdev_e621/providers/auth_provider.dart';
 import 'package:skerdev_e621/providers/boards_provider.dart';
+import 'package:skerdev_e621/providers/ref_boards_provider.dart';
 import 'widget_test.dart';
 
 void main() {
@@ -39,6 +40,8 @@ void main() {
       score: 99,
     );
 
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
     bool loadMoreCalled = false;
 
     await tester.pumpWidget(
@@ -46,6 +49,7 @@ void main() {
         providers: [
           ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
           ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
         ],
         child: MaterialApp(
           home: PostDetailPage(
@@ -62,6 +66,10 @@ void main() {
     // Initial state: first post is displayed
     expect(find.text('File #1001'), findsOneWidget);
     expect(find.text('1 of 2'), findsOneWidget);
+
+    // Verify Download and Save to Board buttons are present in the AppBar
+    expect(find.byTooltip('Download Art'), findsOneWidget);
+    expect(find.byTooltip('Save to Board'), findsOneWidget);
 
     // Swipe left to go to the second post
     await tester.fling(find.byType(PageView), const Offset(-500, 0), 1000);
@@ -93,11 +101,14 @@ void main() {
       score: 10,
     );
 
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
           ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
         ],
         child: MaterialApp(
           home: PostDetailPage(post: singlePost),

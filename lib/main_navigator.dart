@@ -4,6 +4,7 @@ import '../providers/auth_provider.dart';
 import 'pages/account_page.dart';
 import 'pages/gallery_page.dart';
 import 'pages/collections_page.dart';
+import 'pages/refs_studio_page.dart';
 import '../providers/follows_provider.dart';
 
 class MainNavigator extends StatefulWidget {
@@ -19,6 +20,7 @@ class _MainNavigatorState extends State<MainNavigator> {
   final List<Widget> _pages = [
     const E621GalleryPage(),
     const CollectionsPage(),
+    const RefsStudioPage(),
     const AccountPage(),
   ];
 
@@ -37,6 +39,10 @@ class _MainNavigatorState extends State<MainNavigator> {
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: Colors.black,
+        selectedItemColor: Colors.white,
+        unselectedItemColor: Colors.grey,
         showSelectedLabels: false,
         showUnselectedLabels: false,
         onTap: (index) {
@@ -66,6 +72,11 @@ class _MainNavigatorState extends State<MainNavigator> {
                   )
                 : const Icon(Icons.photo_library),
             label: 'Pools & Sets',
+          ),
+          const BottomNavigationBarItem(
+            icon: Icon(Icons.draw_outlined),
+            activeIcon: Icon(Icons.draw, color: Colors.cyanAccent),
+            label: 'Refs & Studio',
           ),
           const BottomNavigationBarItem(
             icon: Icon(Icons.person_outline),

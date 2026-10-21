@@ -7,7 +7,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/post_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/boards_provider.dart';
+import '../providers/ref_boards_provider.dart';
 import '../widgets/save_to_board_sheet.dart';
+import '../widgets/add_to_ref_sheet.dart';
+import '../services/download_service.dart';
 import 'gallery_page.dart';
 
 /// Builds the Hero tag shared between a grid tile and the detail view.
@@ -253,6 +256,19 @@ class _PostDetailPageState extends State<PostDetailPage> {
           ],
         ),
         actions: [
+          Consumer<RefBoardsProvider>(
+            builder: (context, refProvider, child) {
+              final isInRef = refProvider.refBoards.any((b) => b.items.any((i) => i.postId == currentPost.id));
+              return IconButton(
+                icon: Icon(
+                  isInRef ? Icons.draw : Icons.draw_outlined,
+                  color: isInRef ? Colors.cyanAccent : null,
+                ),
+                tooltip: 'Add to Ref Canvas',
+                onPressed: () => showAddToRefSheet(context, currentPost),
+              );
+            },
+          ),
           Consumer<BoardsProvider>(
             builder: (context, boardsProvider, child) {
               final isSaved = boardsProvider.getBoardsContainingPost(currentPost.id).isNotEmpty;
@@ -263,6 +279,18 @@ class _PostDetailPageState extends State<PostDetailPage> {
                 ),
                 tooltip: 'Save to Board',
                 onPressed: () => showSaveToBoardSheet(context, currentPost),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.download_outlined),
+            tooltip: 'Download Art',
+            onPressed: () {
+              final auth = Provider.of<AuthProvider>(context, listen: false);
+              DownloadService.downloadWithFeedback(
+                context,
+                currentPost,
+                authHeaders: auth.authHeaders,
               );
             },
           ),

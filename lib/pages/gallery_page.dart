@@ -6,6 +6,8 @@ import '../models/post_model.dart';
 import 'details_page.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/blacklist_provider.dart';
+import 'settings_page.dart';
 
 class E621GalleryPage extends StatefulWidget {
   final String? initialSearch; // NEW: Accepts an initial search query
@@ -107,15 +109,27 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
           _page++;
           _isLoading = false;
         });
+
+        // If a high percentage of items was filtered by blacklist on page 1, fetch next batch
+        if (mounted) {
+          final bl = Provider.of<BlacklistProvider>(context, listen: false);
+          final visibleCount = bl.filterPosts(_posts).length;
+          if (visibleCount < 10 && _page <= 4 && newPosts.isNotEmpty) {
+            _fetchPosts();
+          }
+        }
       }
     } catch (e) {
       setState(() => _isLoading = false);
-      debugPrint('Erro: $e');
+      debugPrint('Error: $e');
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final blacklist = Provider.of<BlacklistProvider>(context);
+    final visiblePosts = blacklist.filterPosts(_posts, isPool: false);
+
     return Scaffold(
       appBar: AppBar(
         title: Container(
@@ -132,10 +146,49 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
             onSubmitted: _startSearch,
           ),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsPage()),
+            ),
+          ),
+        ],
         centerTitle: true,
       ),
-      body: _posts.isEmpty
-          ? (_isLoading ? const Center(child: CircularProgressIndicator()) : const Center(child: Text("No results.")))
+      body: visiblePosts.isEmpty
+          ? (_isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : (_posts.isNotEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.block, size: 48, color: Colors.grey),
+                          const SizedBox(height: 12),
+                          Text(
+                            'All ${_posts.length} posts hidden by blacklist.',
+                            style: const TextStyle(color: Colors.grey, fontSize: 15),
+                          ),
+                          const SizedBox(height: 14),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[850],
+                              foregroundColor: Colors.cyanAccent,
+                            ),
+                            icon: const Icon(Icons.tune),
+                            label: const Text('Manage Blacklist in Settings'),
+                            onPressed: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const SettingsPage()),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const Center(child: Text("No results."))))
           : GridView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.all(8.0),
@@ -145,11 +198,11 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
                 mainAxisSpacing: 8.0,
                 childAspectRatio: 0.7,
               ),
-              itemCount: _posts.length + (_isLoading ? 1 : 0),
+              itemCount: visiblePosts.length + (_isLoading ? 1 : 0),
               itemBuilder: (context, index) {
-                if (index == _posts.length) return const Center(child: CircularProgressIndicator());
+                if (index == visiblePosts.length) return const Center(child: CircularProgressIndicator());
 
-                final post = _posts[index];
+                final post = visiblePosts[index];
                 final isVideo = post.extension == 'webm' || post.extension == 'mp4';
 
                 return GestureDetector(
@@ -158,7 +211,7 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
                     MaterialPageRoute(
                       builder: (context) => PostDetailPage(
                         post: post,
-                        posts: _posts,
+                        posts: visiblePosts,
                         initialIndex: index,
                         onLoadMore: _fetchPosts,
                         heroTagPrefix: _heroTagPrefix,

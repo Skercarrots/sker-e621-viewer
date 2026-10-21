@@ -344,7 +344,7 @@ void main() {
       expect(provider.boards, isEmpty);
     });
 
-    test('BoardsProvider isolates guest mode and user accounts', () async {
+    test('BoardsProvider persists boards between guest mode and user accounts', () async {
       final fakeStorage = FakeSecureStorage();
       final provider = BoardsProvider(storage: fakeStorage);
 
@@ -354,17 +354,16 @@ void main() {
       expect(provider.boards.length, 1);
       expect(provider.boards.first.name, 'Guest Folder');
 
-      // User account
+      // User account logs in - boards persist
       await provider.updateForUser('user_alpha', isGuest: false);
-      expect(provider.boards, isEmpty);
-      await provider.createBoard('Alpha Collection');
-      expect(provider.boards.length, 1);
-      expect(provider.boards.first.name, 'Alpha Collection');
-
-      // Switch back to guest
-      await provider.updateForUser(null, isGuest: true);
       expect(provider.boards.length, 1);
       expect(provider.boards.first.name, 'Guest Folder');
+      await provider.createBoard('Alpha Collection');
+      expect(provider.boards.length, 2);
+
+      // Switch back to guest - all local boards persist
+      await provider.updateForUser(null, isGuest: true);
+      expect(provider.boards.length, 2);
     });
   });
 

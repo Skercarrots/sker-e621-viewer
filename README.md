@@ -15,9 +15,15 @@ A feature-rich Flutter client for browsing, exploring, and organizing media from
   - Seamless swipe navigation between posts.
   - Comprehensive tag inspection grouped by category (Artists, Characters, Copyrights, Species, General, Meta).
   - Score, favorites count, source links, and post metadata.
-- **Custom Boards**:
-  - Create custom boards to save and organize your favorite posts.
-  - User-specific and guest-mode board management.
+- **Saved Boards & Reference Canvases**:
+  - Create custom boards to bookmark and organize favorite posts locally on device.
+  - Persistent local storage: boards and reference canvases stay saved across guest mode and logged-in user accounts.
+  - Interactive Reference Canvases: infinite 2D studio workspace to pan, zoom, flip horizontally/vertically, and apply grayscale filters for drawing references.
+- **Content Filtering & Blacklists**:
+  - Full client-side blacklist filtering engine supporting single tags, multi-tag combinations (AND), ratings (`rating:e`), negations (`-tag`), and wildcards (`*tag*`).
+  - Dedicated Blacklist Manager accessible from Settings across all main pages.
+  - Toggles for enabling/disabling blacklists globally and controlling filtering inside pools/comics.
+  - Persistent local storage across guest mode and logged-in sessions.
 - **Collections (Pools & Sets)**:
   - Browse pools and sets directly from e621 with detailed multi-post gallery views.
 - **User Authentication & Follows**:

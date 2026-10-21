@@ -6,11 +6,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../providers/auth_provider.dart';
 import '../providers/boards_provider.dart';
 import '../models/post_model.dart';
-import '../models/board_model.dart';
 import 'details_page.dart';
 import 'settings_page.dart';
 import 'login_page.dart';
-import 'board_detail_page.dart';
 
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
@@ -48,7 +46,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     
     final auth = Provider.of<AuthProvider>(context, listen: false);
     _lastFavVersion = auth.favoritesUpdateTrigger;
@@ -71,7 +69,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
     });
 
     _tabController.addListener(() {
-      if (_tabController.index == 2 && _uploadedPosts.isEmpty && !_isLoadingUploads && _hasMoreUploads) {
+      if (_tabController.index == 1 && _uploadedPosts.isEmpty && !_isLoadingUploads && _hasMoreUploads) {
         final currentAuth = Provider.of<AuthProvider>(context, listen: false);
         if (currentAuth.isLoggedIn && currentAuth.user != null) {
           _fetchUploads();
@@ -387,14 +385,14 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
           dividerColor: Colors.transparent,
           labelStyle: const TextStyle(fontWeight: FontWeight.bold),
           tabs: const [
-            Tab(text: "Favs"),
-            Tab(text: "Boards"),
-            Tab(text: "Uploads"),
+            Tab(text: "Favorites"),
+            Tab(text: "My Uploads"),
           ],
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
             onPressed: () => Navigator.push(
               context, 
               MaterialPageRoute(builder: (context) => const SettingsPage())
@@ -406,7 +404,6 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         controller: _tabController,
         children: [
           _buildFavsTab(authProvider),
-          _buildBoardsTab(context, authProvider),
           _buildUploadsTab(context, authProvider),
         ],
       ),
@@ -606,430 +603,8 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
     );
   }
 
-  // --- BOARDS TAB (Pinterest-style Collections) ---
-  Widget _buildBoardsTab(BuildContext context, AuthProvider auth) {
-    final boardsProvider = Provider.of<BoardsProvider>(context);
-    final boards = boardsProvider.boards;
 
-    if (boardsProvider.isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  const Text(
-                    "Your Boards",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      '${boards.length}',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white70),
-                    ),
-                  ),
-                ],
-              ),
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                ),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text("Create Board", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                onPressed: () => _showCreateBoardDialog(context, boardsProvider),
-              ),
-            ],
-          ),
-        ),
-        if (boards.isEmpty)
-          Expanded(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[850],
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.collections_bookmark_outlined,
-                        size: 56,
-                        color: Colors.blueAccent,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      "No boards yet",
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      "Create custom collections to save and organize arts you pick, just like on Pinterest.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey[400], fontSize: 14, height: 1.4),
-                    ),
-                    const SizedBox(height: 24),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                      ),
-                      icon: const Icon(Icons.add),
-                      label: const Text("Create Your First Board", style: TextStyle(fontWeight: FontWeight.bold)),
-                      onPressed: () => _showCreateBoardDialog(context, boardsProvider),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          )
-        else
-          Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12.0,
-                mainAxisSpacing: 12.0,
-                childAspectRatio: 0.82,
-              ),
-              itemCount: boards.length,
-              itemBuilder: (context, index) {
-                final board = boards[index];
-                return GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => BoardDetailPage(boardId: board.id),
-                      ),
-                    );
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[850],
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.grey[800]!, width: 1),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: _buildBoardCollage(board),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.all(10.0),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      board.name,
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${board.postCount} ${board.postCount == 1 ? "art" : "arts"}',
-                                      style: TextStyle(color: Colors.grey[400], fontSize: 11),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              PopupMenuButton<String>(
-                                icon: const Icon(Icons.more_vert, size: 18, color: Colors.grey),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onSelected: (action) {
-                                  if (action == 'rename') {
-                                    _showRenameBoardDialog(context, boardsProvider, board);
-                                  } else if (action == 'delete') {
-                                    _showDeleteBoardDialog(context, boardsProvider, board);
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  const PopupMenuItem(
-                                    value: 'rename',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.edit_outlined, size: 18),
-                                        SizedBox(width: 8),
-                                        Text('Rename'),
-                                      ],
-                                    ),
-                                  ),
-                                  const PopupMenuItem(
-                                    value: 'delete',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
-                                        SizedBox(width: 8),
-                                        Text('Delete', style: TextStyle(color: Colors.redAccent)),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildBoardCollage(Board board) {
-    final posts = board.posts;
-    if (posts.isEmpty) {
-      return Container(
-        color: Colors.grey[800],
-        child: Center(
-          child: Icon(Icons.folder_outlined, size: 44, color: Colors.grey[500]),
-        ),
-      );
-    }
-
-    if (posts.length == 1) {
-      return CachedNetworkImage(
-        imageUrl: posts[0].previewUrl ?? '',
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        placeholder: (context, url) => Container(color: Colors.grey[800]),
-        errorWidget: (context, url, error) => Container(
-          color: Colors.grey[800],
-          child: const Icon(Icons.broken_image, color: Colors.grey),
-        ),
-      );
-    }
-
-    if (posts.length == 2) {
-      return Row(
-        children: [
-          Expanded(
-            child: CachedNetworkImage(
-              imageUrl: posts[0].previewUrl ?? '',
-              fit: BoxFit.cover,
-              height: double.infinity,
-              placeholder: (context, url) => Container(color: Colors.grey[800]),
-              errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
-            ),
-          ),
-          const SizedBox(width: 2),
-          Expanded(
-            child: CachedNetworkImage(
-              imageUrl: posts[1].previewUrl ?? '',
-              fit: BoxFit.cover,
-              height: double.infinity,
-              placeholder: (context, url) => Container(color: Colors.grey[800]),
-              errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
-            ),
-          ),
-        ],
-      );
-    }
-
-    // 3 or more: Pinterest iconic 1-large-left + 2-stacked-right collage
-    return Row(
-      children: [
-        Expanded(
-          flex: 2,
-          child: CachedNetworkImage(
-            imageUrl: posts[0].previewUrl ?? '',
-            fit: BoxFit.cover,
-            height: double.infinity,
-            placeholder: (context, url) => Container(color: Colors.grey[800]),
-            errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
-          ),
-        ),
-        const SizedBox(width: 2),
-        Expanded(
-          flex: 1,
-          child: Column(
-            children: [
-              Expanded(
-                child: CachedNetworkImage(
-                  imageUrl: posts[1].previewUrl ?? '',
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  placeholder: (context, url) => Container(color: Colors.grey[800]),
-                  errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Expanded(
-                child: CachedNetworkImage(
-                  imageUrl: posts[2].previewUrl ?? '',
-                  fit: BoxFit.cover,
-                  width: double.infinity,
-                  placeholder: (context, url) => Container(color: Colors.grey[800]),
-                  errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  void _showCreateBoardDialog(BuildContext context, BoardsProvider boardsProvider) {
-    final controller = TextEditingController();
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: Colors.grey[850],
-          title: const Text('Create New Board'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              hintText: 'e.g. Dragons, Cute, Wallpapers',
-              border: OutlineInputBorder(),
-            ),
-            onSubmitted: (value) async {
-              final trimmed = value.trim();
-              if (trimmed.isNotEmpty) {
-                await boardsProvider.createBoard(trimmed);
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-              }
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final trimmed = controller.text.trim();
-                if (trimmed.isNotEmpty) {
-                  await boardsProvider.createBoard(trimmed);
-                  if (dialogContext.mounted) {
-                    Navigator.of(dialogContext).pop();
-                  }
-                }
-              },
-              child: const Text('Create'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showRenameBoardDialog(BuildContext context, BoardsProvider boardsProvider, Board board) {
-    final controller = TextEditingController(text: board.name);
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: Colors.grey[850],
-          title: const Text('Rename Board'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'Board Name',
-              border: OutlineInputBorder(),
-            ),
-            onSubmitted: (value) async {
-              final trimmed = value.trim();
-              if (trimmed.isNotEmpty) {
-                await boardsProvider.renameBoard(board.id, trimmed);
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-              }
-            },
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final trimmed = controller.text.trim();
-                if (trimmed.isNotEmpty) {
-                  await boardsProvider.renameBoard(board.id, trimmed);
-                  if (dialogContext.mounted) {
-                    Navigator.of(dialogContext).pop();
-                  }
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _showDeleteBoardDialog(BuildContext context, BoardsProvider boardsProvider, Board board) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: Colors.grey[850],
-          title: const Text('Delete Board?'),
-          content: Text('Are you sure you want to delete "${board.name}"? This cannot be undone.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-              onPressed: () async {
-                await boardsProvider.deleteBoard(board.id);
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-              },
-              child: const Text('Delete'),
-            ),
-          ],
-        );
-      },
-    );
-  }
 
   Widget _buildLoggedOutView(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context, listen: false);
@@ -1086,7 +661,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
     );
   }
 
-  // --- UPLOADS TAB (Instagram-style Creator Feed) ---
+  // --- UPLOADS TAB (Creator Feed) ---
   Widget _buildUploadsTab(BuildContext context, AuthProvider auth) {
     if (auth.isGuestMode || !auth.isLoggedIn || auth.user == null) {
       return _buildGuestUploadsPrompt(context);
@@ -1099,7 +674,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverToBoxAdapter(
-            child: _buildInstagramProfileHeader(auth),
+            child: _buildCreatorProfileHeader(auth),
           ),
           SliverToBoxAdapter(
             child: _buildFeedDivider(),
@@ -1207,7 +782,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildInstagramProfileHeader(AuthProvider auth) {
+  Widget _buildCreatorProfileHeader(AuthProvider auth) {
     final user = auth.user;
     if (user == null) return const SizedBox.shrink();
 
@@ -1222,7 +797,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         children: [
           Row(
             children: [
-              // Instagram-style Profile Avatar with vibrant gradient story ring
+              // Profile Avatar with vibrant gradient ring
               Container(
                 padding: const EdgeInsets.all(2.5),
                 decoration: BoxDecoration(
@@ -1263,7 +838,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
                 ),
               ),
               const SizedBox(width: 16),
-              // 3 Instagram Stat Columns
+              // Creator Stat Columns
               Expanded(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,

@@ -5,6 +5,7 @@ import '../models/collection_model.dart';
 import '../models/post_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/follows_provider.dart';
+import '../providers/blacklist_provider.dart';
 import '../services/e621_collections_api.dart';
 import 'details_page.dart';
 
@@ -157,14 +158,15 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
     }
   }
 
-  void _openReader(int initialIndex) {
-    if (_posts.isEmpty) return;
+  void _openReader(int initialIndex, [List<E621Post>? displayPosts]) {
+    final list = displayPosts ?? _posts;
+    if (list.isEmpty) return;
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => PostDetailPage(
-          post: _posts[initialIndex],
-          posts: _posts,
+          post: list[initialIndex],
+          posts: list,
           initialIndex: initialIndex,
           onLoadMore: _hasMore ? _fetchMorePosts : null,
           heroTagPrefix: _heroTagPrefix,
@@ -186,7 +188,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
     return 'POOL';
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, [List<E621Post>? visiblePosts]) {
     final follows = Provider.of<FollowsProvider>(context);
     final isFollowed = follows.isFollowing(_collection.type, _collection.id);
 
@@ -327,7 +329,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
                       'Read Series',
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
                     ),
-                    onPressed: _posts.isNotEmpty ? () => _openReader(0) : null,
+                    onPressed: (visiblePosts ?? _posts).isNotEmpty ? () => _openReader(0, visiblePosts) : null,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -425,6 +427,9 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final blacklist = Provider.of<BlacklistProvider>(context);
+    final visiblePosts = blacklist.filterPosts(_posts, isPool: _collection.isPool);
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -436,14 +441,16 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
       ),
       body: Column(
         children: [
-          _buildHeader(context),
+          _buildHeader(context, visiblePosts),
           Expanded(
-            child: _posts.isEmpty && _isLoading
+            child: visiblePosts.isEmpty && _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _posts.isEmpty
+                : visiblePosts.isEmpty
                     ? Center(
                         child: Text(
-                          'No posts found.',
+                          _posts.isNotEmpty
+                              ? 'All ${_posts.length} posts hidden by blacklist.'
+                              : 'No posts found.',
                           style: TextStyle(color: Colors.grey[400]),
                         ),
                       )
@@ -456,17 +463,17 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
                           mainAxisSpacing: 8.0,
                           childAspectRatio: 0.7,
                         ),
-                        itemCount: _posts.length + (_isLoading ? 1 : 0),
+                        itemCount: visiblePosts.length + (_isLoading ? 1 : 0),
                         itemBuilder: (context, index) {
-                          if (index == _posts.length) {
+                          if (index == visiblePosts.length) {
                             return const Center(child: CircularProgressIndicator());
                           }
 
-                          final post = _posts[index];
+                          final post = visiblePosts[index];
                           final isVideo = post.extension == 'webm' || post.extension == 'mp4';
 
                           return GestureDetector(
-                            onTap: () => _openReader(index),
+                            onTap: () => _openReader(index, visiblePosts),
                             child: Stack(
                               fit: StackFit.expand,
                               children: [

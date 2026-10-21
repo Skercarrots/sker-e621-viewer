@@ -31,6 +31,31 @@ class E621Post {
     this.isFavorited = false,
   });
 
+  Set<String>? _cachedAllTags;
+
+  /// Returns a cached set of all lowercase tags across all categories for fast lookups.
+  Set<String> get allTags {
+    if (_cachedAllTags != null) return _cachedAllTags!;
+    final set = <String>{};
+    for (final t in artistTags) {
+      set.add(t.toLowerCase());
+    }
+    for (final t in characterTags) {
+      set.add(t.toLowerCase());
+    }
+    for (final t in speciesTags) {
+      set.add(t.toLowerCase());
+    }
+    for (final t in copyrightTags) {
+      set.add(t.toLowerCase());
+    }
+    for (final t in generalTags) {
+      set.add(t.toLowerCase());
+    }
+    _cachedAllTags = set;
+    return set;
+  }
+
   factory E621Post.fromJson(Map<String, dynamic> json) {
     // 1. Files & URLs (Support both v2 'files' object and legacy v1 'file', 'sample', 'preview')
     String? fileUrl;
