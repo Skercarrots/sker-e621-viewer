@@ -169,7 +169,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
       }
     } else if (auth.isLoggedIn && auth.user != null) {
       final uri = Uri.https(
-        'e621.net',
+        auth.host,
         '/posts.json',
         {
           'tags': 'fav:${auth.user!.name} id:${post.id}',

@@ -154,30 +154,6 @@ class _RefsStudioPageState extends State<RefsStudioPage> with SingleTickerProvid
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.draw_outlined, size: 18),
-                  const SizedBox(width: 8),
-                  const Text('Ref Canvases'),
-                  if (refProvider.refBoards.isNotEmpty) ...[
-                    const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: Colors.cyanAccent.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '${refProvider.refBoards.length}',
-                        style: const TextStyle(fontSize: 10, color: Colors.cyanAccent, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            Tab(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
                   const Icon(Icons.collections_bookmark_outlined, size: 18),
                   const SizedBox(width: 8),
                   const Text('Saved Boards'),
@@ -198,14 +174,38 @@ class _RefsStudioPageState extends State<RefsStudioPage> with SingleTickerProvid
                 ],
               ),
             ),
+            Tab(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.draw_outlined, size: 18),
+                  const SizedBox(width: 8),
+                  const Text('Ref Canvases'),
+                  if (refProvider.refBoards.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.cyanAccent.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${refProvider.refBoards.length}',
+                        style: const TextStyle(fontSize: 10, color: Colors.cyanAccent, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildRefCanvasesTab(context, refProvider, boardsProvider),
           _buildSavedBoardsTab(context, boardsProvider, refProvider),
+          _buildRefCanvasesTab(context, refProvider, boardsProvider),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -214,9 +214,9 @@ class _RefsStudioPageState extends State<RefsStudioPage> with SingleTickerProvid
         child: const Icon(Icons.add),
         onPressed: () {
           if (_tabController.index == 0) {
-            _showCreateRefBoardDialog(context, refProvider);
-          } else {
             _showCreateBoardDialog(context, boardsProvider);
+          } else {
+            _showCreateRefBoardDialog(context, refProvider);
           }
         },
       ),
@@ -224,7 +224,7 @@ class _RefsStudioPageState extends State<RefsStudioPage> with SingleTickerProvid
   }
 
   // ============================================================================
-  // TAB 1: REF CANVASES (Interactive Reference Canvases)
+  // TAB 2: REF CANVASES (Interactive Reference Canvases)
   // ============================================================================
   Widget _buildRefCanvasesTab(
     BuildContext context,
@@ -493,7 +493,7 @@ class _RefsStudioPageState extends State<RefsStudioPage> with SingleTickerProvid
   }
 
   // ============================================================================
-  // TAB 2: SAVED BOARDS (Migrated from Account)
+  // TAB 1: SAVED BOARDS (Migrated from Account)
   // ============================================================================
   Widget _buildSavedBoardsTab(
     BuildContext context,
@@ -763,4 +763,3 @@ class _RefsStudioPageState extends State<RefsStudioPage> with SingleTickerProvid
     );
   }
 }
-

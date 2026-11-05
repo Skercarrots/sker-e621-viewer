@@ -6,6 +6,13 @@ import '../models/user_model.dart';
 import '../models/post_model.dart';
 
 class AuthProvider with ChangeNotifier {
+  static const String defaultHost = 'e926.net';
+  static const String storageKeySiteHost = 'site_host';
+  static const String storageKeyOver18 = 'is_over_18_verified';
+
+  /// Tracks the currently active host globally for services that don't have BuildContext.
+  static String currentHost = defaultHost;
+
   final FlutterSecureStorage _storage;
   final http.Client _client;
   E621User? _user;
@@ -13,10 +20,14 @@ class AuthProvider with ChangeNotifier {
   String? _apiKey;
   bool _isLoading = false;
   bool _isGuestMode = false;
+  String _host = defaultHost;
+  bool _isOver18Verified = false;
 
   AuthProvider({FlutterSecureStorage? storage, http.Client? client})
       : _storage = storage ?? const FlutterSecureStorage(),
-        _client = client ?? http.Client();
+        _client = client ?? http.Client() {
+    currentHost = _host;
+  }
 
   // --- NEW: Responsiveness Cache & Triggers ---
   int _favoritesUpdateTrigger = 0;
@@ -28,6 +39,47 @@ class AuthProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isGuestMode => _isGuestMode;
   int get favoritesUpdateTrigger => _favoritesUpdateTrigger;
+  String get host => _host;
+  String get siteName => _host.startsWith('e621') ? 'e621' : 'e926';
+  bool get isSafeMode => _host == 'e926.net';
+  bool get isOver18Verified => _isOver18Verified;
+
+  /// Normalizes user input such as "e621", "e621.net", "https://e621.net/",
+  /// "e926", or "e926.net" into a canonical domain ("e926.net" or "e621.net").
+  /// Defaults to [defaultHost] ("e926.net") for unrecognized or empty values.
+  static String normalizeHost(String input) {
+    var cleaned = input.trim().toLowerCase();
+    cleaned = cleaned.replaceFirst(RegExp(r'^https?://'), '');
+    cleaned = cleaned.replaceFirst(RegExp(r'^www\.'), '');
+    cleaned = cleaned.split('/').first.trim();
+
+    if (cleaned == 'e621' || cleaned == 'e621.net') {
+      return 'e621.net';
+    }
+    if (cleaned == 'e926' || cleaned == 'e926.net') {
+      return 'e926.net';
+    }
+    return defaultHost;
+  }
+
+  /// Changes the active site/host configuration.
+  /// Requires [over18Confirmed] to be true (or previously verified).
+  Future<bool> setSiteHost(String rawHost, {required bool over18Confirmed}) async {
+    if (!over18Confirmed && !_isOver18Verified) {
+      return false;
+    }
+
+    _isOver18Verified = true;
+    final normalized = normalizeHost(rawHost);
+    _host = normalized;
+    currentHost = normalized;
+
+    await _storage.write(key: storageKeyOver18, value: 'true');
+    await _storage.write(key: storageKeySiteHost, value: normalized);
+
+    _notifyFavoritesChanged();
+    return true;
+  }
 
   Map<String, String> get authHeaders {
     if (_username != null && _apiKey != null) {
@@ -50,11 +102,29 @@ class AuthProvider with ChangeNotifier {
         _storage.read(key: 'apiKey'),
         _storage.read(key: 'user_profile'),
         _storage.read(key: 'is_guest_mode'),
+        _storage.read(key: storageKeySiteHost),
+        _storage.read(key: storageKeyOver18),
       ]);
       final storedUsername = results[0];
       final storedApiKey = results[1];
       final storedUserProfile = results[2];
       final storedGuestMode = results[3];
+      final storedSiteHost = results[4];
+      final storedOver18 = results[5];
+
+      _isOver18Verified = storedOver18 == 'true';
+      if (storedSiteHost != null && storedSiteHost.isNotEmpty) {
+        final normalized = normalizeHost(storedSiteHost);
+        // Only allow e621.net if over 18 was verified
+        if (normalized == 'e621.net' && !_isOver18Verified) {
+          _host = defaultHost;
+        } else {
+          _host = normalized;
+        }
+      } else {
+        _host = defaultHost;
+      }
+      currentHost = _host;
 
       if (storedUsername != null && storedApiKey != null) {
         _username = storedUsername;
@@ -93,7 +163,7 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> _refreshUserDataInBackground(String username) async {
     try {
-      final uri = Uri.parse('https://e621.net/users/$username.json');
+      final uri = Uri.https(_host, '/users/$username.json');
       final response = await _client.get(uri, headers: authHeaders);
 
       if (response.statusCode == 200) {
@@ -130,7 +200,7 @@ class AuthProvider with ChangeNotifier {
       _username = username;
       _apiKey = key;
 
-      final uri = Uri.parse('https://e621.net/users/$username.json');
+      final uri = Uri.https(_host, '/users/$username.json');
       final response = await _client.get(uri, headers: authHeaders);
 
       if (response.statusCode == 200) {
@@ -189,7 +259,7 @@ class AuthProvider with ChangeNotifier {
     if (_user == null || _user!.avatarId == null || _user!.avatarId! <= 0) return;
     if (_user!.resolvedAvatarUrl != null) return;
     try {
-      final postUri = Uri.https('e621.net', '/posts/${_user!.avatarId}.json', {'v2': 'true'});
+      final postUri = Uri.https(_host, '/posts/${_user!.avatarId}.json', {'v2': 'true'});
       final postRes = await _client.get(postUri, headers: authHeaders);
       if (postRes.statusCode == 200) {
         final dynamic postData = json.decode(postRes.body);
@@ -280,7 +350,7 @@ class AuthProvider with ChangeNotifier {
     try {
       if (!isCurrentlyFav) {
         // We want to ADD it
-        final uri = Uri.parse('https://e621.net/favorites.json');
+        final uri = Uri.https(_host, '/favorites.json');
         final response = await http.post(
           uri,
           headers: authHeaders,
@@ -293,7 +363,7 @@ class AuthProvider with ChangeNotifier {
         }
       } else {
         // We want to REMOVE it
-        final uriDelete = Uri.parse('https://e621.net/favorites/$postId.json');
+        final uriDelete = Uri.https(_host, '/favorites/$postId.json');
         final delResponse = await http.delete(uriDelete, headers: authHeaders);
         if (delResponse.statusCode == 200 || delResponse.statusCode == 204) {
           _knownFavoriteIds.remove(postId);

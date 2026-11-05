@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/collection_model.dart';
 import '../models/post_model.dart';
+import '../providers/auth_provider.dart';
 
 // Top-level so they can run in a background isolate via `compute`.
 // Set responses may contain millions of post ids, so decoding them on the
@@ -40,24 +41,29 @@ class CollectionOrder {
   ];
 }
 
-/// Thin client for e621 pools / post sets endpoints.
+/// Thin client for e621 / e926 pools / post sets endpoints.
 class E621CollectionsApi {
-  static const _host = 'e621.net';
   static const _maxIdsPerQuery = 100;
 
   final Map<String, String> headers;
   final http.Client _client;
+  final String _host;
 
-  E621CollectionsApi(this.headers, {http.Client? client}) : _client = client ?? http.Client();
+  E621CollectionsApi(
+    this.headers, {
+    http.Client? client,
+    String? host,
+  })  : _client = client ?? http.Client(),
+        _host = host ?? AuthProvider.currentHost;
 
   Future<String?> _get(String path, Map<String, String> params) async {
     final uri = Uri.https(_host, path, params);
     try {
       final response = await _client.get(uri, headers: headers);
       if (response.statusCode == 200) return response.body;
-      debugPrint('e621 $path -> ${response.statusCode}');
+      debugPrint('$_host $path -> ${response.statusCode}');
     } catch (e) {
-      debugPrint('e621 $path error: $e');
+      debugPrint('$_host $path error: $e');
     }
     return null;
   }
@@ -198,10 +204,11 @@ class E621CollectionsApi {
     final List<dynamic> list = (data is List)
         ? data
         : (data is Map && data['posts'] is List ? data['posts'] as List<dynamic> : const []);
+    final isSafeMode = _host == 'e926.net';
     return list
         .whereType<Map<String, dynamic>>()
         .map(E621Post.fromJson)
-        .where((p) => p.previewUrl != null)
+        .where((p) => p.previewUrl != null && (!isSafeMode || p.rating.toLowerCase() == 's'))
         .toList();
   }
 
@@ -211,4 +218,3 @@ class E621CollectionsApi {
     }
   }
 }
-

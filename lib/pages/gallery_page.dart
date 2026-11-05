@@ -32,6 +32,7 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
   bool _isLoading = false;
   int _page = 1;
   String _currentTags = '';
+  String? _lastHost;
 
   /// Unique per gallery instance (several galleries can be alive at once).
   late final String _heroTagPrefix = 'gallery-${identityHashCode(this)}';
@@ -46,6 +47,7 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
       _searchController.text = widget.initialSearch!;
     }
     
+    _lastHost = Provider.of<AuthProvider>(context, listen: false).host;
     _fetchPosts();
 
     _scrollController.addListener(() {
@@ -78,10 +80,11 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
     try {
-      final String searchTags = _currentTags.trim().isEmpty ? 'rating:s order:score' : _currentTags.trim();
+      final defaultQuery = authProvider.isSafeMode ? 'rating:s order:score' : 'order:score';
+      final String searchTags = _currentTags.trim().isEmpty ? defaultQuery : _currentTags.trim();
 
       final uri = Uri.https(
-        'e621.net',
+        authProvider.host,
         '/posts.json',
         {
           'tags': searchTags,
@@ -102,7 +105,9 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
         final newPosts = postsJson
             .whereType<Map<String, dynamic>>()
             .map((json) => E621Post.fromJson(json))
-            .where((post) => post.previewUrl != null)
+            .where((post) =>
+                post.previewUrl != null &&
+                (!authProvider.isSafeMode || post.rating.toLowerCase() == 's'))
             .toList();
 
         for (final post in newPosts) {
@@ -125,6 +130,8 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
             _fetchPosts();
           }
         }
+      } else {
+        setState(() => _isLoading = false);
       }
     } catch (e) {
       setState(() => _isLoading = false);
@@ -134,6 +141,21 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
 
   @override
   Widget build(BuildContext context) {
+    final authProvider = Provider.of<AuthProvider>(context);
+    if (_lastHost != null && _lastHost != authProvider.host) {
+      _lastHost = authProvider.host;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _posts.clear();
+            _page = 1;
+            _isLoading = false;
+          });
+          _fetchPosts();
+        }
+      });
+    }
+
     final blacklist = Provider.of<BlacklistProvider>(context);
     final visiblePosts = blacklist.filterPosts(_posts, isPool: false);
 

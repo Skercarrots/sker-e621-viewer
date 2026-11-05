@@ -69,7 +69,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
 
   Future<void> _initFetch() async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
-    final api = E621CollectionsApi(auth.authHeaders);
+    final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
 
     // If pool has no postIds, fetch the full pool details first
     if (_collection.isPool && _poolPostIds.isEmpty) {
@@ -94,7 +94,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
     setState(() => _isLoading = true);
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
-    final api = E621CollectionsApi(auth.authHeaders);
+    final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
 
     try {
       List<E621Post> newPosts = [];

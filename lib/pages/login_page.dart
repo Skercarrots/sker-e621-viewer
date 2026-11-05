@@ -43,10 +43,11 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isLoading = Provider.of<AuthProvider>(context).isLoading;
+    final authProvider = Provider.of<AuthProvider>(context);
+    final isLoading = authProvider.isLoading;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Link e621 Account")),
+      appBar: AppBar(title: Text("Link ${authProvider.siteName} Account")),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Form(
@@ -54,14 +55,14 @@ class _LoginPageState extends State<LoginPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text(
-                "Link your account to bypass the e621 global blacklist and access all content. Use your Username and API Key (never your password).",
-                style: TextStyle(fontSize: 15),
+              Text(
+                "Link your account to access your favorites and bypass the ${authProvider.siteName} global blacklist. Use your Username and API Key (never your password).",
+                style: const TextStyle(fontSize: 15),
               ),
               const SizedBox(height: 12),
-              const Text(
-                "Find your API key on the e621 website: log in to your account, then go to Account -> Manage API Access.",
-                style: TextStyle(color: Colors.grey, fontSize: 13),
+              Text(
+                "Find your API key on the ${authProvider.host} website: log in to your account, then go to Account -> Manage API Access.",
+                style: const TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const SizedBox(height: 32),
               TextFormField(

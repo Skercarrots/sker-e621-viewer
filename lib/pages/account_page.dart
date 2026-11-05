@@ -148,7 +148,11 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
       final String searchText = _searchController.text.trim();
       if (auth.isGuestMode) {
         List<E621Post> localFavs = await auth.getGuestFavorites();
-        localFavs = localFavs.reversed.toList();
+        localFavs = localFavs
+            .where((post) => !auth.isSafeMode || post.rating.toLowerCase() == 's')
+            .toList()
+            .reversed
+            .toList();
 
         if (searchText.isNotEmpty) {
            final searchTerms = searchText.toLowerCase().split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
@@ -183,7 +187,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         if (searchText.isNotEmpty) {
           final String searchTags = "fav:${auth.user!.name} $searchText order:favat";
           uri = Uri.https(
-            'e621.net',
+            auth.host,
             '/posts.json',
             {
               'tags': searchTags,
@@ -195,7 +199,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
           );
         } else {
           uri = Uri.https(
-            'e621.net',
+            auth.host,
             '/favorites.json',
             {
               'user_id': '$userId',
@@ -218,7 +222,9 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
           final newPosts = postsJson
               .whereType<Map<String, dynamic>>()
               .map((json) => E621Post.fromJson(json))
-              .where((post) => post.previewUrl != null)
+              .where((post) =>
+                  post.previewUrl != null &&
+                  (!auth.isSafeMode || post.rating.toLowerCase() == 's'))
               .toList();
 
           auth.registerFavorites(newPosts.map((p) => p.id).toList());
@@ -267,7 +273,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
 
     try {
       final uri = Uri.https(
-        'e621.net',
+        auth.host,
         '/posts.json',
         {
           'tags': 'user:${auth.user!.name}',
@@ -289,7 +295,9 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         final newPosts = postsJson
             .whereType<Map<String, dynamic>>()
             .map((json) => E621Post.fromJson(json))
-            .where((post) => post.previewUrl != null)
+            .where((post) =>
+                post.previewUrl != null &&
+                (!auth.isSafeMode || post.rating.toLowerCase() == 's'))
             .toList();
 
         setState(() {
@@ -604,10 +612,10 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)
             ),
             const SizedBox(height: 16),
-            const Text(
-              "Link your e621 account to access your favorites and bypass the e621 global blacklist, which hides certain content for guests.",
+            Text(
+              "Link your ${auth.siteName} account to access your favorites and bypass the global blacklist, which hides certain content for guests.",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
+              style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
             ),
             const SizedBox(height: 32),
             ElevatedButton(
@@ -980,10 +988,10 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            const Text(
-              "You haven't uploaded any posts to e621 yet, or uploads could not be loaded.",
+            Text(
+              "You haven't uploaded any posts to ${Provider.of<AuthProvider>(context, listen: false).siteName} yet, or uploads could not be loaded.",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white60, fontSize: 13),
+              style: const TextStyle(color: Colors.white60, fontSize: 13),
             ),
             const SizedBox(height: 16),
             ElevatedButton.icon(
@@ -1018,10 +1026,10 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
               style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
-            const Text(
-              "Connect your e621 account to view your uploaded arts, like statistics, and upvotes.",
+            Text(
+              "Connect your ${Provider.of<AuthProvider>(context, listen: false).siteName} account to view your uploaded arts, like statistics, and upvotes.",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
+              style: const TextStyle(color: Colors.white70, fontSize: 14, height: 1.4),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(

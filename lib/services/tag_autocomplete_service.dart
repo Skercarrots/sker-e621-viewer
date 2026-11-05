@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../providers/auth_provider.dart';
 
 /// Represents a single e621 tag or metatag suggestion.
 class TagSuggestion {
@@ -181,10 +182,9 @@ class TagTokenContext {
       codeUnit == 0x20 || codeUnit == 0x09 || codeUnit == 0x0A || codeUnit == 0x0D;
 }
 
-/// Service that fetches tag autocomplete suggestions from e621 and merges
-/// built-in search metatags (like `order:score` or `rating:s`).
+/// Service that fetches tag autocomplete suggestions from the active site host
+/// and merges built-in search metatags (like `order:score` or `rating:s`).
 class TagAutocompleteService {
-  static const String _host = 'e621.net';
   static const int _maxCacheEntries = 100;
 
   static const List<TagSuggestion> builtInMetatags = [
@@ -207,22 +207,31 @@ class TagAutocompleteService {
   ];
 
   final http.Client _client;
+  final String? host;
   final Map<String, List<TagSuggestion>> _cache = {};
 
-  TagAutocompleteService({http.Client? client}) : _client = client ?? http.Client();
+  TagAutocompleteService({http.Client? client, this.host})
+      : _client = client ?? http.Client();
 
   /// Fetches suggestions for the active tag [query] (without leading `-` or `~`).
   Future<List<TagSuggestion>> fetchSuggestions(
     String query, {
     Map<String, String>? headers,
     int limit = 10,
+    String? host,
   }) async {
     final normalized = query.trim().toLowerCase().replaceAll(' ', '_');
     if (normalized.isEmpty) return const [];
 
+    final activeHost = host ?? this.host ?? AuthProvider.currentHost;
+    final isSafeHost = activeHost == 'e926.net';
+
     // Check matching metatags (e.g. order:score, rating:s)
     final matchingMeta = builtInMetatags
-        .where((m) => m.name.startsWith(normalized) && m.name != normalized)
+        .where((m) =>
+            (!isSafeHost || (m.name != 'rating:q' && m.name != 'rating:e')) &&
+            m.name.startsWith(normalized) &&
+            m.name != normalized)
         .toList();
 
     // If the user is typing a metatag with a colon (e.g. "order:", "rating:s"),
@@ -231,8 +240,9 @@ class TagAutocompleteService {
       return matchingMeta.take(limit).toList();
     }
 
-    if (_cache.containsKey(normalized)) {
-      return _cache[normalized]!.take(limit).toList();
+    final cacheKey = '$activeHost|$normalized';
+    if (_cache.containsKey(cacheKey)) {
+      return _cache[cacheKey]!.take(limit).toList();
     }
 
     final requestHeaders = headers ?? const {'User-Agent': 'SkerE621/1.0 (by anonymous on e621)'};
@@ -240,8 +250,8 @@ class TagAutocompleteService {
 
     try {
       if (normalized.length >= 3) {
-        // e621's dedicated autocomplete endpoint supports >= 3 characters and resolves aliases.
-        final uri = Uri.https(_host, '/tags/autocomplete.json', {
+        // Dedicated autocomplete endpoint supports >= 3 characters and resolves aliases.
+        final uri = Uri.https(activeHost, '/tags/autocomplete.json', {
           'search[name_matches]': normalized,
           'expiry': '7',
         });
@@ -258,7 +268,7 @@ class TagAutocompleteService {
         }
       } else {
         // For 1-2 character prefixes, /tags/autocomplete.json returns 400, so use /tags.json.
-        final uri = Uri.https(_host, '/tags.json', {
+        final uri = Uri.https(activeHost, '/tags.json', {
           'search[name_matches]': '$normalized*',
           'search[order]': 'count',
           'search[hide_empty]': 'true',
@@ -304,7 +314,7 @@ class TagAutocompleteService {
       if (_cache.length >= _maxCacheEntries) {
         _cache.remove(_cache.keys.first);
       }
-      _cache[normalized] = combined;
+      _cache[cacheKey] = combined;
     }
 
     return combined.take(limit).toList();

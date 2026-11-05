@@ -131,7 +131,7 @@ class _FollowingTabState extends State<_FollowingTab> {
   Future<void> _refreshFollowsBackground() async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final follows = Provider.of<FollowsProvider>(context, listen: false);
-    final api = E621CollectionsApi(auth.authHeaders);
+    final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
     await follows.refreshFollowedCounts(api);
   }
 
@@ -140,7 +140,7 @@ class _FollowingTabState extends State<_FollowingTab> {
     setState(() => _isLoadingMySets = true);
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
-    final api = E621CollectionsApi(auth.authHeaders);
+    final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
 
     try {
       final sets = await api.searchSets(creatorName: username, limit: 50);
@@ -307,6 +307,8 @@ class _FollowingTabState extends State<_FollowingTab> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+
     if (_mySets.isEmpty) {
       return Center(
         child: Padding(
@@ -316,13 +318,13 @@ class _FollowingTabState extends State<_FollowingTab> {
             children: [
               Icon(Icons.folder_open, size: 56, color: Colors.grey[600]),
               const SizedBox(height: 16),
-              const Text(
-                'No sets found on e621',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              Text(
+                'No sets found on ${auth.siteName}',
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 6),
               Text(
-                'You have not created any public or private sets on your e621 account.',
+                'You have not created any public or private sets on your ${auth.siteName} account.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey[400], fontSize: 13),
               ),
@@ -332,7 +334,6 @@ class _FollowingTabState extends State<_FollowingTab> {
       );
     }
 
-    final auth = Provider.of<AuthProvider>(context, listen: false);
     return RefreshIndicator(
       onRefresh: () => _fetchMySets(auth.user!.name),
       child: GridView.builder(
@@ -371,6 +372,7 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
   bool _isLoading = false;
   bool _hasMore = true;
   int _page = 1;
+  String? _lastHost;
 
   // Filters
   String? _category; // null: all, 'series', 'collection'
@@ -382,6 +384,7 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
   @override
   void initState() {
     super.initState();
+    _lastHost = Provider.of<AuthProvider>(context, listen: false).host;
     _fetchPools(reset: true);
 
     _scrollController.addListener(() {
@@ -410,7 +413,7 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
     }
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
-    final api = E621CollectionsApi(auth.authHeaders);
+    final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
 
     try {
       final results = await api.searchPools(
@@ -442,6 +445,16 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final auth = Provider.of<AuthProvider>(context);
+    if (_lastHost != null && _lastHost != auth.host) {
+      _lastHost = auth.host;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _isLoading = false;
+          _fetchPools(reset: true);
+        }
+      });
+    }
 
     return Column(
       children: [
@@ -595,6 +608,7 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
   bool _hasMore = true;
   int _page = 1;
   String _order = 'updated_at';
+  String? _lastHost;
 
   @override
   bool get wantKeepAlive => true;
@@ -602,6 +616,7 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
   @override
   void initState() {
     super.initState();
+    _lastHost = Provider.of<AuthProvider>(context, listen: false).host;
     _fetchSets(reset: true);
 
     _scrollController.addListener(() {
@@ -630,7 +645,7 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
     }
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
-    final api = E621CollectionsApi(auth.authHeaders);
+    final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
 
     try {
       final results = await api.searchSets(
@@ -661,6 +676,16 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final auth = Provider.of<AuthProvider>(context);
+    if (_lastHost != null && _lastHost != auth.host) {
+      _lastHost = auth.host;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _isLoading = false;
+          _fetchSets(reset: true);
+        }
+      });
+    }
 
     return Column(
       children: [
@@ -764,4 +789,3 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
     );
   }
 }
-

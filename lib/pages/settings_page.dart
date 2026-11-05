@@ -8,6 +8,100 @@ import 'login_page.dart';
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
+  Future<bool> _showOver18Dialog(BuildContext context) async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.amberAccent),
+              SizedBox(width: 10),
+              Expanded(child: Text('Age Confirmation')),
+            ],
+          ),
+          content: const Text(
+            'You must be at least 18 years old to change the site/host configuration.\n\n'
+            'Do you confirm and agree that you are over 18 years of age?',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('I am over 18'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
+  Future<void> _showChangeHostFlow(BuildContext context, AuthProvider authProvider) async {
+    final confirmedOver18 = await _showOver18Dialog(context);
+    if (!confirmedOver18 || !context.mounted) return;
+
+    final controller = TextEditingController(text: authProvider.host);
+
+    final newHostInput = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: const Text('Change site/host'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              focusedBorder: UnderlineInputBorder(
+                borderSide: BorderSide(
+                  color: Theme.of(dialogContext).colorScheme.primary,
+                  width: 2,
+                ),
+              ),
+              enabledBorder: const UnderlineInputBorder(
+                borderSide: BorderSide(color: Colors.white54),
+              ),
+            ),
+            onSubmitted: (val) => Navigator.of(dialogContext).pop(val),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (newHostInput != null && context.mounted) {
+      await authProvider.setSiteHost(newHostInput, over18Confirmed: true);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Site/host set to ${authProvider.host}'),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+      }
+    }
+  }
+
   // Method to display confirmation dialog
   Future<void> _showUnlinkDialog(BuildContext context, AuthProvider authProvider) async {
     final bool isGuest = authProvider.isGuestMode;
@@ -25,7 +119,7 @@ class SettingsPage extends StatelessWidget {
                 Text(
                   isGuest
                       ? 'This will return you to the main screen. You can enter Guest Mode or link an account again later.'
-                      : 'Are you sure you want to unlink your e621 account? You will lose access to your remote favorites and the global blacklist will be re-enabled.',
+                      : 'Are you sure you want to unlink your ${authProvider.siteName} account? You will lose access to your remote favorites and the global blacklist will be re-enabled.',
                   style: const TextStyle(color: Colors.white70),
                 ),
               ],
@@ -84,6 +178,24 @@ class SettingsPage extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          // --- GENERAL SECTION ---
+          _buildSectionHeader(context, "GENERAL"),
+
+          ListTile(
+            leading: const Icon(Icons.warning_amber_rounded, color: Colors.white),
+            title: const Text(
+              "Change site/host",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              authProvider.host,
+              style: TextStyle(color: Colors.grey[400], fontSize: 13),
+            ),
+            onTap: () => _showChangeHostFlow(context, authProvider),
+          ),
+
+          const Divider(color: Colors.white12, height: 28),
+
           // --- BLACKLIST SECTION (Wolf Stash style with Sker dark UI) ---
           _buildSectionHeader(context, "BLACKLIST & FILTERING"),
 
@@ -159,7 +271,7 @@ class SettingsPage extends StatelessWidget {
                   ? "Unlink Account"
                   : authProvider.isGuestMode
                       ? "Exit Guest Mode"
-                      : "Link e621 Account",
+                      : "Link ${authProvider.siteName} Account",
               style: TextStyle(
                 color: (authProvider.isLoggedIn || authProvider.isGuestMode)
                     ? Colors.redAccent

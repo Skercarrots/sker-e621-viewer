@@ -120,10 +120,14 @@ class _TagSearchBarState extends State<TagSearchBar> {
     _measureTargetWidth();
 
     Map<String, String>? headers;
+    String? host;
     try {
-      headers = Provider.of<AuthProvider>(context, listen: false).authHeaders;
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      headers = auth.authHeaders;
+      host = auth.host;
     } catch (_) {
       headers = null;
+      host = null;
     }
 
     setState(() {
@@ -134,6 +138,7 @@ class _TagSearchBarState extends State<TagSearchBar> {
       token.query,
       headers: headers,
       limit: 8,
+      host: host,
     );
 
     if (!mounted || currentRequest != _requestId) return;
