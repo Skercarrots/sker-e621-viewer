@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../providers/auth_provider.dart';
 import '../providers/boards_provider.dart';
 import '../models/post_model.dart';
+import '../widgets/tag_search_bar.dart';
 import 'details_page.dart';
 import 'settings_page.dart';
 import 'login_page.dart';
@@ -447,36 +448,16 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
 
     final searchBar = Padding(
       padding: const EdgeInsets.all(12.0),
-      child: Container(
+      child: TagSearchBar(
+        controller: _searchController,
+        hintText: 'Search my favorites',
         decoration: BoxDecoration(
           color: Colors.grey[900],
           borderRadius: BorderRadius.circular(25),
         ),
-        child: ValueListenableBuilder<TextEditingValue>(
-          valueListenable: _searchController,
-          builder: (context, value, _) {
-            final hasText = value.text.isNotEmpty;
-            return TextField(
-              controller: _searchController,
-              onSubmitted: (val) => _refreshFavorites(query: val),
-              decoration: InputDecoration(
-                hintText: 'Search my favorites',
-                prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                suffixIcon: hasText
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, color: Colors.grey),
-                        onPressed: () {
-                          _searchController.clear();
-                          _refreshFavorites(query: '');
-                        },
-                      )
-                    : null,
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            );
-          },
-        ),
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+        onSubmitted: (val) => _refreshFavorites(query: val),
+        onCleared: () => _refreshFavorites(query: ''),
       ),
     );
 

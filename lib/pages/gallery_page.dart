@@ -7,11 +7,18 @@ import 'details_page.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/blacklist_provider.dart';
+import '../services/tag_autocomplete_service.dart';
+import '../widgets/tag_search_bar.dart';
 import 'settings_page.dart';
 
 class E621GalleryPage extends StatefulWidget {
   final String? initialSearch; // NEW: Accepts an initial search query
-  const E621GalleryPage({super.key, this.initialSearch});
+  final TagAutocompleteService? autocompleteService;
+  const E621GalleryPage({
+    super.key,
+    this.initialSearch,
+    this.autocompleteService,
+  });
 
   @override
   State<E621GalleryPage> createState() => _E621GalleryPageState();
@@ -132,19 +139,12 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Container(
-          height: 45,
-          decoration: BoxDecoration(color: Colors.grey[800], borderRadius: BorderRadius.circular(8)),
-          child: TextField(
-            controller: _searchController,
-            decoration: const InputDecoration(
-               hintText: 'Search (ex: dragon order:score)',
-              border: InputBorder.none,
-              prefixIcon: Icon(Icons.search),
-              contentPadding: EdgeInsets.symmetric(vertical: 10),
-            ),
-            onSubmitted: _startSearch,
-          ),
+        title: TagSearchBar(
+          controller: _searchController,
+          hintText: 'Search (ex: dragon order:score)',
+          autocompleteService: widget.autocompleteService,
+          onSubmitted: _startSearch,
+          onCleared: () => _startSearch(''),
         ),
         actions: [
           IconButton(
