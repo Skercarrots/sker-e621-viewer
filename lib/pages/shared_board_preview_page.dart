@@ -153,7 +153,7 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
     );
   }
 
-  Future<void> _handleSaveOrOpenRefCanvas() async {
+  Future<void> _handleSaveRefCanvas() async {
     final refProvider = Provider.of<RefBoardsProvider>(context, listen: false);
 
     if (_savedRefBoardId != null) {
@@ -164,23 +164,15 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
       return;
     }
 
-    final RefBoard created;
-    if (widget.payload.isRefCanvas) {
-      final validItems = _hydratedRefItems
-          .where((item) => item.imageUrl.isNotEmpty || (item.previewUrl?.isNotEmpty ?? false))
-          .toList();
-      created = await refProvider.importSharedRefBoard(
-        name: widget.payload.name,
-        items: validItems,
-        backgroundColorHex: widget.payload.backgroundColorHex,
-        isLocked: widget.payload.isLocked,
-      );
-    } else {
-      created = await refProvider.createRefBoard(
-        'Ref: ${widget.payload.name}',
-        initialPosts: _hydratedPosts,
-      );
-    }
+    final validItems = _hydratedRefItems
+        .where((item) => item.imageUrl.isNotEmpty || (item.previewUrl?.isNotEmpty ?? false))
+        .toList();
+    final RefBoard created = await refProvider.importSharedRefBoard(
+      name: widget.payload.name,
+      items: validItems,
+      backgroundColorHex: widget.payload.backgroundColorHex,
+      isLocked: widget.payload.isLocked,
+    );
 
     if (!mounted) return;
     setState(() {
@@ -567,80 +559,39 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
       child: SafeArea(
         top: false,
         child: isRef
-            ? Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        side: BorderSide(color: Colors.grey[700]!),
-                      ),
-                      icon: Icon(
-                        _savedBoardId != null
-                            ? Icons.check_circle_outline
-                            : Icons.collections_bookmark_outlined,
-                        size: 18,
-                      ),
-                      label: Text(_savedBoardId != null ? 'Open Board' : 'Save as Board'),
-                      onPressed: _isLoading ? null : _handleSaveAsBoard,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.cyanAccent,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                      ),
-                      icon: const Icon(Icons.draw, size: 18),
-                      label: Text(
-                        _savedRefBoardId != null
-                            ? 'Open Ref Canvas'
-                            : 'Save to Ref Canvases',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      onPressed: _isLoading ? null : _handleSaveOrOpenRefCanvas,
-                    ),
-                  ),
-                ],
+            ? ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.cyanAccent,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+                icon: Icon(
+                  _savedRefBoardId != null ? Icons.check_circle : Icons.draw,
+                  size: 18,
+                ),
+                label: Text(
+                  _savedRefBoardId != null
+                      ? 'Saved • Open Ref Canvas'
+                      : 'Save to Ref Canvases',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                onPressed: _isLoading ? null : _handleSaveRefCanvas,
               )
-            : Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.cyanAccent,
-                        side: const BorderSide(color: Colors.cyanAccent),
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                      ),
-                      icon: const Icon(Icons.draw_outlined, size: 18),
-                      label: const Text('Open in Canvas'),
-                      onPressed: _isLoading ? null : _handleSaveOrOpenRefCanvas,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                      ),
-                      icon: Icon(
-                        _savedBoardId != null ? Icons.check_circle : Icons.bookmark_add_outlined,
-                        size: 18,
-                      ),
-                      label: Text(
-                        _savedBoardId != null ? 'Saved • Open Board' : 'Save to My Boards',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      onPressed: _isLoading ? null : _handleSaveAsBoard,
-                    ),
-                  ),
-                ],
+            : ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+                icon: Icon(
+                  _savedBoardId != null ? Icons.check_circle : Icons.bookmark_add_outlined,
+                  size: 18,
+                ),
+                label: Text(
+                  _savedBoardId != null ? 'Saved • Open Board' : 'Save to My Boards',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                onPressed: _isLoading ? null : _handleSaveAsBoard,
               ),
       ),
     );

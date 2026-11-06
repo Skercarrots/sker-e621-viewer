@@ -85,6 +85,7 @@ class BlacklistProvider with ChangeNotifier {
   static const String storageKeyEnabled = 'blacklist_enabled';
   static const String storageKeyPoolPosts = 'blacklist_pool_posts';
   static const String storageKeyHideBlacklistedPools = 'blacklist_hide_pools';
+  static const String storageKeyHideEmptyCollections = 'blacklist_hide_empty_collections';
 
   static const String defaultBlacklist = 'young\nscat\nwatersports\nbestiality';
 
@@ -92,6 +93,7 @@ class BlacklistProvider with ChangeNotifier {
   bool _isEnabled = true;
   bool _blacklistPoolPosts = false;
   bool _hideBlacklistedPools = false;
+  bool _hideEmptyCollections = true;
   bool _isLoaded = false;
 
   List<BlacklistRule> _parsedRules = [];
@@ -105,6 +107,7 @@ class BlacklistProvider with ChangeNotifier {
   bool get isEnabled => _isEnabled;
   bool get blacklistPoolPosts => _blacklistPoolPosts;
   bool get hideBlacklistedPools => _hideBlacklistedPools;
+  bool get hideEmptyCollections => _hideEmptyCollections;
   bool get isLoaded => _isLoaded;
   List<BlacklistRule> get parsedRules => List.unmodifiable(_parsedRules);
   int get ruleCount => _parsedRules.length;
@@ -181,6 +184,14 @@ class BlacklistProvider with ChangeNotifier {
         await _storage.write(key: storageKeyHideBlacklistedPools, value: 'false');
       }
 
+      final savedHideEmpty = await _storage.read(key: storageKeyHideEmptyCollections);
+      if (savedHideEmpty != null) {
+        _hideEmptyCollections = savedHideEmpty == 'true';
+      } else {
+        _hideEmptyCollections = true;
+        await _storage.write(key: storageKeyHideEmptyCollections, value: 'true');
+      }
+
       _parseRules(_rawBlacklist);
       _isLoaded = true;
       _safeNotify();
@@ -223,6 +234,17 @@ class BlacklistProvider with ChangeNotifier {
     _hideBlacklistedPools = enabled;
     await _storage.write(
       key: storageKeyHideBlacklistedPools,
+      value: enabled ? 'true' : 'false',
+    );
+    _safeNotify();
+  }
+
+  /// Toggles whether pools and sets with 0 viewable images are hidden from grid results
+  Future<void> setHideEmptyCollections(bool enabled) async {
+    if (_hideEmptyCollections == enabled) return;
+    _hideEmptyCollections = enabled;
+    await _storage.write(
+      key: storageKeyHideEmptyCollections,
       value: enabled ? 'true' : 'false',
     );
     _safeNotify();
@@ -295,13 +317,40 @@ class BlacklistProvider with ChangeNotifier {
     return false;
   }
 
-  /// Filters a list of collections/pools, removing pools that contain blacklisted posts
-  /// when [hideBlacklistedPools] is enabled.
-  List<E621Collection> filterPools(List<E621Collection> pools) {
-    if (!_isEnabled || !_hideBlacklistedPools || _parsedRules.isEmpty) {
-      return pools;
+  /// Checks if a pool or set has 0 viewable images on the current host
+  /// (e.g. when on e926 safe mode where non-safe posts are hidden, or when
+  /// all resolved posts are hidden by the active blacklist).
+  bool isCollectionEmpty(E621Collection collection, {bool isSafeMode = false}) {
+    if (!_hideEmptyCollections) return false;
+    if (collection.postCount <= 0 &&
+        collection.postIds.isEmpty &&
+        collection.posts.isEmpty) {
+      return true;
     }
-    return pools.where((pool) => !isPoolBlacklisted(pool)).toList();
+    if (collection.posts.isNotEmpty) {
+      final hasAnyVisible = collection.posts.any((p) {
+        if (p.previewUrl == null || p.previewUrl!.isEmpty) return false;
+        if (isSafeMode && p.rating.toLowerCase() != 's') return false;
+        if (isPostBlacklisted(p, isPool: collection.isPool)) return false;
+        return true;
+      });
+      return !hasAnyVisible;
+    }
+    return collection.coverUrl == null || collection.coverUrl!.isEmpty;
+  }
+
+  /// Filters a list of collections/pools, removing:
+  /// - pools/sets with 0 viewable images when [hideEmptyCollections] is enabled
+  /// - pools that contain blacklisted posts when [hideBlacklistedPools] is enabled
+  List<E621Collection> filterPools(
+    List<E621Collection> pools, {
+    bool isSafeMode = false,
+  }) {
+    return pools.where((pool) {
+      if (isCollectionEmpty(pool, isSafeMode: isSafeMode)) return false;
+      if (isPoolBlacklisted(pool)) return false;
+      return true;
+    }).toList();
   }
 }
 

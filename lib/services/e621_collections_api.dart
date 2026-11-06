@@ -25,6 +25,7 @@ class E621CollectionsApi {
   static const _maxIdsPerQuery = 100;
   static const _maxPoolPostsToInspect = 5;
   static final Map<String, E621Post> _postCache = {};
+  static final Map<String, E621Collection> _poolCache = {};
 
   final Map<String, String> headers;
   final http.Client _client;
@@ -296,15 +297,41 @@ class E621CollectionsApi {
   }
 
   Future<List<E621Collection>> getPoolsByIds(List<int> ids) async {
-    final result = <E621Collection>[];
-    for (final chunk in _chunks(ids)) {
+    if (ids.isEmpty) return const [];
+    final byId = <int, E621Collection>{};
+    final missing = <int>[];
+
+    for (final id in ids.toSet()) {
+      final cached = _useCache ? _poolCache['$_host:$id'] : null;
+      if (cached != null) {
+        byId[id] = cached;
+      } else {
+        missing.add(id);
+      }
+    }
+
+    for (final chunk in _chunks(missing)) {
       final body = await _get('/pools.json', {
         'search[id]': chunk.join(','),
         'limit': '${chunk.length}',
       });
-      if (body != null) result.addAll(await compute(_parsePools, body));
+      if (body == null) continue;
+      final parsed = (!_useCache || body.length < 32768)
+          ? _parsePools(body)
+          : await compute(_parsePools, body);
+      for (final pool in parsed) {
+        if (_useCache) {
+          if (_poolCache.length > 500) _poolCache.clear();
+          _poolCache['$_host:${pool.id}'] = pool;
+        }
+        byId[pool.id] = pool;
+      }
     }
-    return result;
+
+    return [
+      for (final id in ids)
+        if (byId.containsKey(id)) byId[id]!,
+    ];
   }
 
   Future<E621Collection?> getPool(int id) async {
@@ -540,14 +567,34 @@ class E621CollectionsApi {
     final posts = await getPostsByIds(ids.toList(), requirePreview: false);
     final isSafeMode = _host == 'e926.net';
 
+    if (isSafeMode) {
+      final extraIds = <int>{};
+      for (final c in collections) {
+        if (c.postIds.length <= _maxPoolPostsToInspect) continue;
+        final hasSafeInInitial = [
+          if (c.coverPostId != null) c.coverPostId!,
+          ...c.postIds.take(_maxPoolPostsToInspect),
+        ].any((id) {
+          final p = posts[id];
+          return p != null && p.previewUrl != null && p.rating.toLowerCase() == 's';
+        });
+        if (!hasSafeInInitial) {
+          extraIds.addAll(c.postIds.skip(_maxPoolPostsToInspect).take(15));
+        }
+      }
+      if (extraIds.isNotEmpty) {
+        posts.addAll(await getPostsByIds(extraIds.toList(), requirePreview: false));
+      }
+    }
+
     return collections.map((c) {
       final coverPost = c.coverPostId != null ? posts[c.coverPostId] : null;
       final resolvedPosts = c.postIds
           .map((id) => posts[id])
           .whereType<E621Post>()
           .toList();
-      if (resolvedPosts.isEmpty && coverPost != null) {
-        resolvedPosts.add(coverPost);
+      if (coverPost != null && !resolvedPosts.any((p) => p.id == coverPost.id)) {
+        resolvedPosts.insert(0, coverPost);
       }
 
       String? validCoverUrl = (coverPost?.previewUrl != null &&

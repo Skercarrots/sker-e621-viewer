@@ -41,6 +41,18 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
 
   bool _isDescriptionExpanded = false;
 
+  // Pool posts the host (e.g. e926 safe mode) did not return, counted per fetched chunk.
+  int _poolHostHiddenCount = 0;
+
+  /// Posts that exist in the collection but are not available on the current host.
+  /// Pools know this exactly per chunk; sets can only tell once every page is loaded.
+  int get _hostHiddenCount {
+    if (_collection.isPool) return _poolHostHiddenCount;
+    if (_hasMore || _isLoading) return 0;
+    final diff = _collection.postCount - _posts.length;
+    return diff > 0 ? diff : 0;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -114,6 +126,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
         _poolOffset = end;
 
         newPosts = await api.getPostsInOrder(chunk);
+        _poolHostHiddenCount += chunk.toSet().length - newPosts.length;
         if (_poolOffset >= _poolPostIds.length) {
           _hasMore = false;
         }
@@ -317,6 +330,48 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
                             fontSize: 12.5,
                             color: Colors.grey[400],
                             fontWeight: FontWeight.w500,
+                          ),
+                        );
+                      },
+                    ),
+                    Builder(
+                      builder: (context) {
+                        final host = Provider.of<AuthProvider>(context).host;
+                        final hiddenByBlacklist =
+                            _posts.length - (visiblePosts ?? _posts).length;
+                        final hiddenByHost = _hostHiddenCount;
+                        if (hiddenByBlacklist <= 0 && hiddenByHost <= 0) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Padding(
+                                padding: EdgeInsets.only(top: 1),
+                                child: Icon(
+                                  Icons.visibility_off_outlined,
+                                  size: 14,
+                                  color: Colors.orangeAccent,
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  [
+                                    if (hiddenByBlacklist > 0)
+                                      '$hiddenByBlacklist hidden by blacklist',
+                                    if (hiddenByHost > 0)
+                                      '$hiddenByHost unavailable on $host',
+                                  ].join(' \u2022 '),
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    color: Colors.orangeAccent,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         );
                       },

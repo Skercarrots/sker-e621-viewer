@@ -172,16 +172,7 @@ class BoardShareService {
     return '$refCanvasPrefix$compressed';
   }
 
-  /// Builds a `sker://share?code=...` deep link from a share code.
-  static String buildDeepLink(String shareCode) {
-    return Uri(
-      scheme: deepLinkScheme,
-      host: deepLinkHost,
-      queryParameters: {'code': shareCode},
-    ).toString();
-  }
-
-  /// Builds a friendly message containing both the deep link and the share code.
+  /// Builds a friendly message containing the share code.
   static String buildShareMessage({
     required String name,
     required int itemCount,
@@ -192,10 +183,8 @@ class BoardShareService {
     final unit = isRefCanvas
         ? (itemCount == 1 ? 'ref' : 'refs')
         : (itemCount == 1 ? 'art' : 'arts');
-    final link = buildDeepLink(shareCode);
     return 'Check out my $kind "$name" ($itemCount $unit) on Sker e621 Viewer!\n'
-        'Open link: $link\n'
-        'Or import code in app: $shareCode';
+        'Import this code in the app: $shareCode';
   }
 
   /// Extracts and decodes a [SharedBoardPayload] from any user input:

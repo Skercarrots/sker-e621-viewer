@@ -5,14 +5,13 @@ import '../models/ref_board_model.dart';
 import '../pages/shared_board_preview_page.dart';
 import '../services/board_share_service.dart';
 
-/// Opens a bottom sheet with the generated Share Code and Deep Link for a [Board].
+/// Opens a bottom sheet with the generated Share Code for a [Board].
 void showShareBoardSheet(
   BuildContext context,
   Board board, {
   String? author,
 }) {
   final code = BoardShareService.encodeBoard(board, author: author);
-  final deepLink = BoardShareService.buildDeepLink(code);
   final message = BoardShareService.buildShareMessage(
     name: board.name,
     itemCount: board.postCount,
@@ -33,13 +32,12 @@ void showShareBoardSheet(
       badgeLabel: 'SAVED BOARD',
       accentColor: Colors.blueAccent,
       shareCode: code,
-      deepLink: deepLink,
       fullShareMessage: message,
     ),
   );
 }
 
-/// Opens a bottom sheet with the generated Share Code and Deep Link for a [RefBoard]
+/// Opens a bottom sheet with the generated Share Code for a [RefBoard]
 /// (preserving all 2D positions, sizes, flips, grayscale filters, and z-order).
 void showShareRefCanvasSheet(
   BuildContext context,
@@ -47,7 +45,6 @@ void showShareRefCanvasSheet(
   String? author,
 }) {
   final code = BoardShareService.encodeRefBoard(refBoard, author: author);
-  final deepLink = BoardShareService.buildDeepLink(code);
   final message = BoardShareService.buildShareMessage(
     name: refBoard.name,
     itemCount: refBoard.itemCount,
@@ -69,14 +66,13 @@ void showShareRefCanvasSheet(
       badgeLabel: 'REF CANVAS',
       accentColor: Colors.cyanAccent,
       shareCode: code,
-      deepLink: deepLink,
       fullShareMessage: message,
     ),
   );
 }
 
 /// Opens a bottom sheet that lets the user import a shared Board or Ref Canvas
-/// via Share Code (`SKER-B1:...` / `SKER-R1:...`) or Deep Link (`sker://share?...`),
+/// via Share Code (`SKER-B1:...` / `SKER-R1:...`),
 /// with automatic clipboard detection.
 void showImportSharedModal(BuildContext context) {
   showModalBottomSheet<void>(
@@ -96,7 +92,6 @@ class _ShareOutputSheet extends StatefulWidget {
   final String badgeLabel;
   final Color accentColor;
   final String shareCode;
-  final String deepLink;
   final String fullShareMessage;
 
   const _ShareOutputSheet({
@@ -105,7 +100,6 @@ class _ShareOutputSheet extends StatefulWidget {
     required this.badgeLabel,
     required this.accentColor,
     required this.shareCode,
-    required this.deepLink,
     required this.fullShareMessage,
   });
 
@@ -224,31 +218,6 @@ class _ShareOutputSheetState extends State<_ShareOutputSheet> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: BorderSide(color: Colors.grey[700]!),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    icon: Icon(
-                      _copiedKind == 'message' ? Icons.check_rounded : Icons.link_rounded,
-                      size: 18,
-                    ),
-                    label: Text(
-                      _copiedKind == 'message' ? 'Copied!' : 'Copy Link',
-                    ),
-                    onPressed: () => _copy(
-                      widget.deepLink,
-                      'message',
-                      'Link copied!',
-                    ),
-                  ),
-                ),
               ],
             ),
           ],
@@ -317,7 +286,7 @@ class _ImportSharedSheetState extends State<_ImportSharedSheet> {
     final decoded = BoardShareService.tryDecodeAny(raw);
     setState(() {
       _typedPayload = decoded;
-      _errorText = decoded == null ? 'Invalid code or link' : null;
+      _errorText = decoded == null ? 'Invalid share code' : null;
     });
   }
 
@@ -376,7 +345,7 @@ class _ImportSharedSheetState extends State<_ImportSharedSheet> {
               controller: _controller,
               maxLines: 1,
               decoration: InputDecoration(
-                hintText: 'Paste share code or link...',
+                hintText: 'Paste share code...',
                 hintStyle: TextStyle(fontSize: 13, color: Colors.grey[500]),
                 errorText: _errorText,
                 filled: true,

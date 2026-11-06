@@ -65,7 +65,7 @@ class AuthProvider with ChangeNotifier {
   /// Changes the active site/host configuration.
   /// Requires [over18Confirmed] to be true (or previously verified).
   Future<bool> setSiteHost(String rawHost, {required bool over18Confirmed}) async {
-    if (!over18Confirmed && !_isOver18Verified) {
+    if (!over18Confirmed && !_isOver18Verified && _host == defaultHost) {
       return false;
     }
 

@@ -44,8 +44,10 @@ class SettingsPage extends StatelessWidget {
   }
 
   Future<void> _showChangeHostFlow(BuildContext context, AuthProvider authProvider) async {
-    final confirmedOver18 = await _showOver18Dialog(context);
-    if (!confirmedOver18 || !context.mounted) return;
+    if (authProvider.host == AuthProvider.defaultHost) {
+      final confirmedOver18 = await _showOver18Dialog(context);
+      if (!confirmedOver18 || !context.mounted) return;
+    }
 
     final controller = TextEditingController(text: authProvider.host);
 
@@ -266,6 +268,23 @@ class SettingsPage extends StatelessWidget {
             activeThumbColor: Theme.of(context).colorScheme.primary,
             onChanged: (val) {
               blacklistProvider.setHideBlacklistedPools(val);
+            },
+          ),
+
+          SwitchListTile(
+            secondary: const Icon(Icons.hide_image_outlined, color: Colors.white),
+            title: const Text(
+              "Hide empty pools and sets",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              "Disable to show pools and sets even when they have 0 viewable images",
+              style: TextStyle(color: Colors.grey[400], fontSize: 13),
+            ),
+            value: blacklistProvider.hideEmptyCollections,
+            activeThumbColor: Theme.of(context).colorScheme.primary,
+            onChanged: (val) {
+              blacklistProvider.setHideEmptyCollections(val);
             },
           ),
 

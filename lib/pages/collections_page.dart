@@ -124,12 +124,103 @@ class _FollowingTabState extends State<_FollowingTab> {
   bool _isLoadingMySets = false;
   String? _loadedMySetsUser;
 
+  final TextEditingController _searchController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshFollowsBackground();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Local search over name, description and creator of already loaded collections.
+  List<E621Collection> _applySearch(List<E621Collection> source, String query) {
+    if (query.isEmpty) return source;
+    return source.where((c) => c.matchesMetadataKeyword(query)).toList();
+  }
+
+  Widget _buildSearchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+      child: Container(
+        height: 46,
+        decoration: BoxDecoration(
+          color: Colors.grey[850],
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey[800]!),
+        ),
+        child: Row(
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(left: 12, right: 2),
+              child: Icon(Icons.search, size: 20, color: Colors.grey),
+            ),
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                style: const TextStyle(fontSize: 14),
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: 'Search followed collections…',
+                  hintStyle: TextStyle(color: Colors.grey[500], fontSize: 13.5),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                ),
+              ),
+            ),
+            if (_searchController.text.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.close, size: 18, color: Colors.grey),
+                tooltip: 'Clear',
+                visualDensity: VisualDensity.compact,
+                onPressed: () {
+                  _searchController.clear();
+                  setState(() {});
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNoMatches() {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.12),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              children: [
+                Icon(Icons.search_off, size: 52, color: Colors.grey[600]),
+                const SizedBox(height: 16),
+                const Text(
+                  'No matches',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Nothing here matches "${_searchController.text.trim()}".',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Future<void> _refreshFollowsBackground() async {
@@ -176,33 +267,40 @@ class _FollowingTabState extends State<_FollowingTab> {
       _fetchMySets(auth.user!.name);
     }
 
-    final List<FollowedCollection> items;
+    final query = _searchController.text.trim();
+    final List<FollowedCollection> allItems;
     if (_selectedFilter == 'pools') {
-      items = follows.followedPools;
+      allItems = follows.followedPools;
     } else if (_selectedFilter == 'sets') {
-      items = follows.followedSets;
+      allItems = follows.followedSets;
     } else {
-      items = follows.follows;
+      allItems = follows.follows;
     }
+    final items = query.isEmpty
+        ? allItems
+        : allItems.where((i) => i.collection.matchesMetadataKeyword(query)).toList();
 
     return Column(
       children: [
+        _buildSearchField(),
+
         // Filter Chips row
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
-          child: Row(
-            children: [
-              _buildFilterChip('all', 'All (${follows.follows.length})'),
-              const SizedBox(width: 8),
-              _buildFilterChip('pools', 'Pools (${follows.followedPools.length})'),
-              const SizedBox(width: 8),
-              _buildFilterChip('sets', 'Sets (${follows.followedSets.length})'),
-              if (auth.isLoggedIn && auth.user != null) ...[
-                const SizedBox(width: 8),
-                _buildFilterChip('my_sets', 'My Sets (${_mySets.length})'),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+            child: CollectionSegments<String>(
+              options: [
+                ('all', 'All (${follows.follows.length})'),
+                ('pools', 'Pools (${follows.followedPools.length})'),
+                ('sets', 'Sets (${follows.followedSets.length})'),
+                if (auth.isLoggedIn && auth.user != null)
+                  ('my_sets', 'My Sets (${_mySets.length})'),
               ],
-            ],
+              selected: _selectedFilter,
+              onSelected: (value) => setState(() => _selectedFilter = value),
+            ),
           ),
         ),
 
@@ -213,7 +311,7 @@ class _FollowingTabState extends State<_FollowingTab> {
               : RefreshIndicator(
                   onRefresh: _refreshFollowsBackground,
                   child: items.isEmpty
-                      ? _buildEmptyState()
+                      ? (allItems.isNotEmpty ? _buildNoMatches() : _buildEmptyState())
                       : GridView.builder(
                           physics: const AlwaysScrollableScrollPhysics(),
                           padding: const EdgeInsets.all(12.0),
@@ -235,33 +333,6 @@ class _FollowingTabState extends State<_FollowingTab> {
                 ),
         ),
       ],
-    );
-  }
-
-  Widget _buildFilterChip(String value, String label) {
-    final isSelected = _selectedFilter == value;
-    return ChoiceChip(
-      label: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          color: isSelected ? Colors.white : Colors.grey[300],
-        ),
-      ),
-      selected: isSelected,
-      onSelected: (_) {
-        setState(() {
-          _selectedFilter = value;
-        });
-      },
-      selectedColor: Theme.of(context).colorScheme.primary,
-      backgroundColor: Colors.grey[850],
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      side: BorderSide(
-        color: isSelected ? Colors.transparent : Colors.grey[800]!,
-      ),
-      visualDensity: VisualDensity.compact,
     );
   }
 
@@ -338,9 +409,15 @@ class _FollowingTabState extends State<_FollowingTab> {
       );
     }
 
+    final query = _searchController.text.trim();
+    final shownSets = _applySearch(_mySets, query);
+
     return RefreshIndicator(
       onRefresh: () => _fetchMySets(auth.user!.name),
-      child: GridView.builder(
+      child: shownSets.isEmpty
+          ? _buildNoMatches()
+          : GridView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(12.0),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
@@ -348,9 +425,9 @@ class _FollowingTabState extends State<_FollowingTab> {
           mainAxisSpacing: 12.0,
           childAspectRatio: 0.82,
         ),
-        itemCount: _mySets.length,
+        itemCount: shownSets.length,
         itemBuilder: (context, index) {
-          final setItem = _mySets[index];
+          final setItem = shownSets[index];
           return CollectionCard(collection: setItem);
         },
       ),
@@ -422,10 +499,14 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
   }
 
   /// Pools that survive the blacklist, the local filters and the chosen order.
-  List<E621Collection> _visiblePools(BlacklistProvider blacklist, String query) {
+  List<E621Collection> _visiblePools(
+    BlacklistProvider blacklist,
+    String query, {
+    required bool isSafeMode,
+  }) {
     final f = _filters;
     final visible = blacklist
-        .filterPools(_pools)
+        .filterPools(_pools, isSafeMode: isSafeMode)
         .where((p) => f.passesLocal(p) && f.matchesQuery(p, query))
         .toList();
     return E621CollectionsApi.sortPools(
@@ -505,8 +586,10 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
 
       // Strict filters can leave the screen almost empty: keep loading a few pages.
       final bl = Provider.of<BlacklistProvider>(context, listen: false);
-      final visibleCount = _visiblePools(bl, activeQuery).length;
-      final maxPage = f.minPosts > 0 ? 10 : 4;
+      final visibleCount =
+          _visiblePools(bl, activeQuery, isSafeMode: auth.isSafeMode).length;
+      final maxPage =
+          (f.minPosts > 0 || (auth.isSafeMode && bl.hideEmptyCollections)) ? 10 : 4;
       if (visibleCount < 6 && _page <= maxPage && results.isNotEmpty && _hasMore) {
         _fetchPools();
       }
@@ -533,7 +616,8 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
 
     final activeQuery = _searchController.text.trim();
     final showMatches = _filters.inPosts && activeQuery.isNotEmpty;
-    final visiblePools = _visiblePools(blacklist, activeQuery);
+    final visiblePools =
+        _visiblePools(blacklist, activeQuery, isSafeMode: auth.isSafeMode);
 
     return Column(
       children: [
@@ -702,10 +786,14 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
     _fetchSets(reset: true);
   }
 
-  List<E621Collection> _visibleSets(BlacklistProvider blacklist, String query) {
+  List<E621Collection> _visibleSets(
+    BlacklistProvider blacklist,
+    String query, {
+    required bool isSafeMode,
+  }) {
     final f = _filters;
     final visible = blacklist
-        .filterPools(_sets)
+        .filterPools(_sets, isSafeMode: isSafeMode)
         .where((s) => f.passesLocal(s) && f.matchesQuery(s, query))
         .toList();
     return E621CollectionsApi.sortPools(
@@ -781,8 +869,10 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
 
       // Strict filters can leave the screen almost empty: keep loading a few pages.
       final bl = Provider.of<BlacklistProvider>(context, listen: false);
-      final visibleCount = _visibleSets(bl, activeQuery).length;
-      final maxPage = f.minPosts > 0 ? 10 : 4;
+      final visibleCount =
+          _visibleSets(bl, activeQuery, isSafeMode: auth.isSafeMode).length;
+      final maxPage =
+          (f.minPosts > 0 || (auth.isSafeMode && bl.hideEmptyCollections)) ? 10 : 4;
       if (visibleCount < 6 && _page <= maxPage && results.isNotEmpty && _hasMore) {
         _fetchSets();
       }
@@ -809,7 +899,8 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
 
     final activeQuery = _searchController.text.trim();
     final showMatches = _filters.inPosts && activeQuery.isNotEmpty;
-    final visibleSets = _visibleSets(blacklist, activeQuery);
+    final visibleSets =
+        _visibleSets(blacklist, activeQuery, isSafeMode: auth.isSafeMode);
 
     return Column(
       children: [

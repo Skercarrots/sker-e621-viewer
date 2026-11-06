@@ -119,7 +119,7 @@ class CollectionSearchHeader extends StatelessWidget {
           child: Row(
             children: [
               if (isPool) ...[
-                _Segments<String?>(
+                CollectionSegments<String?>(
                   options: const [
                     (null, 'All'),
                     ('series', 'Series'),
@@ -132,7 +132,7 @@ class CollectionSearchHeader extends StatelessWidget {
               ],
               Expanded(
                 child: Align(
-                  alignment: isPool ? Alignment.centerRight : Alignment.centerLeft,
+                  alignment: Alignment.centerRight,
                   child: _SortButton(
                     filters: filters,
                     isPool: isPool,
@@ -195,13 +195,14 @@ class _OptionsButton extends StatelessWidget {
   }
 }
 
-/// Compact pill-shaped segmented control.
-class _Segments<T> extends StatelessWidget {
+/// Compact pill-shaped segmented control (also used by the Following tab).
+class CollectionSegments<T> extends StatelessWidget {
   final List<(T, String)> options;
   final T selected;
   final ValueChanged<T> onSelected;
 
-  const _Segments({
+  const CollectionSegments({
+    super.key,
     required this.options,
     required this.selected,
     required this.onSelected,

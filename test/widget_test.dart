@@ -105,6 +105,11 @@ void main() {
         },
         "rating": "s",
         "description": "Sample description",
+        "pools": [402, 509],
+        "relationships": {
+          "parent_id": 4149000,
+          "children": [4149500, 4149501]
+        },
         "tags": {
           "general": ["solo", "tail"],
           "artist": ["gattonero"],
@@ -130,6 +135,9 @@ void main() {
       expect(post.isFavorited, isTrue);
       expect(post.rating, 's');
       expect(post.description, 'Sample description');
+      expect(post.poolIds, [402, 509]);
+      expect(post.parentId, 4149000);
+      expect(post.childrenIds, [4149500, 4149501]);
     });
 
     test('parses v2 format with mode=basic (flat tags list)', () {
@@ -221,6 +229,9 @@ void main() {
         rating: "s",
         description: "Test description",
         isFavorited: true,
+        poolIds: [11, 22],
+        parentId: 700,
+        childrenIds: [778, 779],
       );
 
       final serialized = post.toJson();
@@ -240,6 +251,9 @@ void main() {
       expect(restored.rating, post.rating);
       expect(restored.description, post.description);
       expect(restored.isFavorited, post.isFavorited);
+      expect(restored.poolIds, [11, 22]);
+      expect(restored.parentId, 700);
+      expect(restored.childrenIds, [778, 779]);
     });
   });
 

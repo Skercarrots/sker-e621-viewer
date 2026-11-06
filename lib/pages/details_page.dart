@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import '../models/collection_model.dart';
 import '../models/post_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/boards_provider.dart';
@@ -11,6 +12,8 @@ import '../providers/ref_boards_provider.dart';
 import '../widgets/save_to_board_sheet.dart';
 import '../widgets/add_to_ref_sheet.dart';
 import '../services/download_service.dart';
+import '../services/e621_collections_api.dart';
+import 'collection_detail_page.dart';
 import 'gallery_page.dart';
 
 /// Builds the Hero tag shared between a grid tile and the detail view.
@@ -39,6 +42,9 @@ class PostDetailPage extends StatefulWidget {
   /// [postHeroTag] so it animates from the tapped grid tile.
   final String? heroTagPrefix;
 
+  /// Optional collections API client (useful for testing or custom clients).
+  final E621CollectionsApi? collectionsApi;
+
   const PostDetailPage({
     super.key,
     this.post,
@@ -46,6 +52,7 @@ class PostDetailPage extends StatefulWidget {
     this.initialIndex,
     this.onLoadMore,
     this.heroTagPrefix,
+    this.collectionsApi,
   }) : assert(post != null || (posts != null && posts.length > 0), 'Either post or non-empty posts must be provided.');
 
   @override
@@ -318,6 +325,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
             post: post,
             isActive: index == _currentIndex,
             heroTag: widget.heroTagPrefix != null ? postHeroTag(widget.heroTagPrefix!, index, post) : null,
+            collectionsApi: widget.collectionsApi,
+            siblingPosts: _posts,
           );
         },
       ),
@@ -329,12 +338,16 @@ class _PostContentView extends StatefulWidget {
   final E621Post post;
   final bool isActive;
   final String? heroTag;
+  final E621CollectionsApi? collectionsApi;
+  final List<E621Post>? siblingPosts;
 
   const _PostContentView({
     super.key,
     required this.post,
     required this.isActive,
     this.heroTag,
+    this.collectionsApi,
+    this.siblingPosts,
   });
 
   @override
@@ -344,6 +357,8 @@ class _PostContentView extends StatefulWidget {
 class _PostContentViewState extends State<_PostContentView> {
   VideoPlayerController? _videoController;
   late bool isVideo;
+  final Map<int, E621Collection> _resolvedPools = {};
+  final Map<int, E621Post> _resolvedRelatedPosts = {};
 
   @override
   void initState() {
@@ -351,6 +366,61 @@ class _PostContentViewState extends State<_PostContentView> {
     isVideo = _isVideoPost(widget.post);
     if (isVideo && widget.isActive) {
       _initVideo();
+    }
+    _seedSiblingPosts();
+    _loadPoolsAndRelationships();
+  }
+
+  E621CollectionsApi _getApi() {
+    if (widget.collectionsApi != null) return widget.collectionsApi!;
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    return E621CollectionsApi(auth.authHeaders, host: auth.host);
+  }
+
+  void _seedSiblingPosts() {
+    final siblings = widget.siblingPosts;
+    if (siblings == null || siblings.isEmpty) return;
+    final parentId = widget.post.parentId;
+    final childrenSet = widget.post.childrenIds.toSet();
+    for (final s in siblings) {
+      if (s.id == parentId || childrenSet.contains(s.id)) {
+        _resolvedRelatedPosts[s.id] = s;
+      }
+    }
+  }
+
+  Future<void> _loadPoolsAndRelationships() async {
+    final post = widget.post;
+    if (!post.hasPools && !post.hasRelationships) return;
+
+    final api = _getApi();
+
+    if (post.poolIds.isNotEmpty) {
+      try {
+        final pools = await api.getPoolsByIds(post.poolIds);
+        if (mounted && widget.post.id == post.id && pools.isNotEmpty) {
+          setState(() {
+            for (final p in pools) {
+              _resolvedPools[p.id] = p;
+            }
+          });
+        }
+      } catch (_) {}
+    }
+
+    final relatedIds = <int>[
+      if (post.parentId != null) post.parentId!,
+      ...post.childrenIds,
+    ];
+    if (relatedIds.isNotEmpty) {
+      try {
+        final postsMap = await api.getPostsByIds(relatedIds, requirePreview: false);
+        if (mounted && widget.post.id == post.id && postsMap.isNotEmpty) {
+          setState(() {
+            _resolvedRelatedPosts.addAll(postsMap);
+          });
+        }
+      } catch (_) {}
     }
   }
 
@@ -371,6 +441,12 @@ class _PostContentViewState extends State<_PostContentView> {
   @override
   void didUpdateWidget(_PostContentView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.post.id != widget.post.id) {
+      _resolvedPools.clear();
+      _resolvedRelatedPosts.clear();
+      _seedSiblingPosts();
+      _loadPoolsAndRelationships();
+    }
     if (isVideo) {
       if (widget.isActive && !oldWidget.isActive) {
         if (_videoController == null) {
@@ -388,6 +464,341 @@ class _PostContentViewState extends State<_PostContentView> {
   void dispose() {
     _videoController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _openRelatedPost(
+    BuildContext context,
+    int postId, {
+    List<int>? siblingIds,
+  }) async {
+    E621Post? target = _resolvedRelatedPosts[postId];
+    if (target == null) {
+      try {
+        final map = await _getApi().getPostsByIds([postId], requirePreview: false);
+        target = map[postId];
+        if (target != null && mounted) {
+          setState(() {
+            _resolvedRelatedPosts[postId] = target!;
+          });
+        }
+      } catch (_) {}
+    }
+
+    if (!context.mounted) return;
+
+    if (target != null) {
+      List<E621Post>? list;
+      int initialIndex = 0;
+      if (siblingIds != null && siblingIds.length > 1) {
+        final resolvedList = siblingIds
+            .map((id) => _resolvedRelatedPosts[id])
+            .whereType<E621Post>()
+            .toList();
+        if (resolvedList.isNotEmpty) {
+          list = resolvedList;
+          final idx = resolvedList.indexWhere((p) => p.id == postId);
+          if (idx >= 0) initialIndex = idx;
+        }
+      }
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PostDetailPage(
+            post: target,
+            posts: list,
+            initialIndex: initialIndex,
+            collectionsApi: widget.collectionsApi,
+          ),
+        ),
+      );
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => E621GalleryPage(initialSearch: 'id:$postId'),
+        ),
+      );
+    }
+  }
+
+  Widget _buildPoolsSection(BuildContext context) {
+    if (widget.post.poolIds.isEmpty) return const SizedBox.shrink();
+    const color = Colors.tealAccent;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8.0),
+          child: Text(
+            'Pools',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color),
+          ),
+        ),
+        Wrap(
+          spacing: 8.0,
+          runSpacing: 6.0,
+          children: widget.post.poolIds.map((poolId) {
+            final pool = _resolvedPools[poolId];
+            final hasName = pool != null && pool.displayName.trim().isNotEmpty;
+            final pageIdx = pool != null ? pool.postIds.indexOf(widget.post.id) : -1;
+            final totalPosts = pool != null
+                ? (pool.postCount > 0 ? pool.postCount : pool.postIds.length)
+                : 0;
+            final String? progressLabel = (pageIdx >= 0 && totalPosts > 0)
+                ? 'Page ${pageIdx + 1} of $totalPosts'
+                : (totalPosts > 0 ? '$totalPosts posts' : null);
+            final String? categoryBadge = pool == null
+                ? null
+                : (pool.isSeries ? 'SERIES' : 'COLLECTION');
+
+            return Material(
+              color: color.withValues(alpha: 0.14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+                side: BorderSide(color: color.withValues(alpha: 0.45)),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: () {
+                  final targetPool = pool ??
+                      E621Collection(
+                        type: CollectionType.pool,
+                        id: poolId,
+                        name: 'Pool #$poolId',
+                      );
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => CollectionDetailPage(collection: targetPool),
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        pool?.isSeries == true
+                            ? Icons.auto_stories
+                            : Icons.collections_bookmark_outlined,
+                        size: 16,
+                        color: color,
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              hasName ? pool.displayName : 'Pool #$poolId',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                            if (hasName || categoryBadge != null || progressLabel != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Wrap(
+                                  spacing: 6,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    if (categoryBadge != null)
+                                      Text(
+                                        categoryBadge,
+                                        style: const TextStyle(
+                                          fontSize: 9.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: color,
+                                        ),
+                                      ),
+                                    if (progressLabel != null)
+                                      Text(
+                                        progressLabel,
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          color: Colors.grey[300],
+                                        ),
+                                      ),
+                                    if (hasName)
+                                      Text(
+                                        'Pool #$poolId',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.grey[400],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.chevron_right, size: 16, color: Colors.white54),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRelatedPostChip(
+    BuildContext context, {
+    required int postId,
+    required String label,
+    required bool isParent,
+    required Color color,
+    List<int>? siblingIds,
+  }) {
+    final related = _resolvedRelatedPosts[postId];
+    final thumbUrl = related?.previewUrl;
+
+    return Material(
+      color: color.withValues(alpha: 0.14),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: color.withValues(alpha: 0.45)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openRelatedPost(context, postId, siblingIds: siblingIds),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (thumbUrl != null && thumbUrl.isNotEmpty) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: CachedNetworkImage(
+                      imageUrl: thumbUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(color: Colors.grey[850]),
+                      errorWidget: (context, url, error) => Container(
+                        color: Colors.grey[850],
+                        child: Icon(
+                          isParent ? Icons.subdirectory_arrow_left : Icons.subdirectory_arrow_right,
+                          size: 14,
+                          color: color,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ] else ...[
+                Icon(
+                  isParent ? Icons.subdirectory_arrow_left : Icons.subdirectory_arrow_right,
+                  size: 16,
+                  color: color,
+                ),
+                const SizedBox(width: 6),
+              ],
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if (related != null && (related.rating.isNotEmpty || related.score != 0))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Text(
+                        [
+                          if (related.rating.isNotEmpty) related.rating.toUpperCase(),
+                          if (related.score != 0) '↑ ${related.score}',
+                        ].join(' • '),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey[300],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRelationshipsSection(BuildContext context) {
+    final parentId = widget.post.parentId;
+    final childrenIds = widget.post.childrenIds;
+    if (parentId == null && childrenIds.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (parentId != null) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8.0),
+            child: Text(
+              'Parent Post',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.orangeAccent,
+              ),
+            ),
+          ),
+          _buildRelatedPostChip(
+            context,
+            postId: parentId,
+            label: 'Parent #$parentId',
+            isParent: true,
+            color: Colors.orangeAccent,
+          ),
+        ],
+        if (childrenIds.isNotEmpty) ...[
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8.0),
+            child: Text(
+              'Children Posts',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.cyanAccent,
+              ),
+            ),
+          ),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 6.0,
+            children: childrenIds
+                .map(
+                  (childId) => _buildRelatedPostChip(
+                    context,
+                    postId: childId,
+                    label: 'Child #$childId',
+                    isParent: false,
+                    color: Colors.cyanAccent,
+                    siblingIds: childrenIds,
+                  ),
+                )
+                .toList(),
+          ),
+        ],
+      ],
+    );
   }
 
   Widget _buildTagSection(BuildContext context, String title, List<String> tags, Color color) {
@@ -590,6 +1001,8 @@ class _PostContentViewState extends State<_PostContentView> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                _buildPoolsSection(context),
+                _buildRelationshipsSection(context),
                 _buildTagSection(context, 'Artists', widget.post.artistTags, Colors.redAccent),
                 _buildTagSection(context, 'Characters', widget.post.characterTags, Colors.greenAccent),
                 _buildTagSection(context, 'Copyrights', widget.post.copyrightTags, Colors.purpleAccent),

@@ -64,6 +64,13 @@ void main() {
       final authProvider = AuthProvider(storage: storage);
       final blacklistProvider = BlacklistProvider(storage: storage);
 
+      // The settings list is long; use a tall window so every tile (e.g. the
+      // account section) is built, since ListView only builds visible children.
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
       await tester.pumpWidget(
         MultiProvider(
           providers: [
@@ -112,6 +119,13 @@ void main() {
       expect(authProvider.host, 'e621.net');
       expect(find.text('e621.net'), findsOneWidget);
       expect(find.text('Link e621 Account'), findsOneWidget);
+
+      // When host is not the default one (e926.net), tapping Change site/host
+      // opens the host input dialog directly without asking for age again.
+      await tester.tap(find.text('Change site/host'));
+      await tester.pumpAndSettle();
+      expect(find.text('Age Confirmation'), findsNothing);
+      expect(find.byType(TextField), findsOneWidget);
     });
   });
 }

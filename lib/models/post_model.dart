@@ -14,6 +14,8 @@ class E621Post {
   final String description;
   final bool isFavorited;
   final List<int> poolIds;
+  final int? parentId;
+  final List<int> childrenIds;
 
   E621Post({
     required this.id,
@@ -31,7 +33,38 @@ class E621Post {
     this.description = '',
     this.isFavorited = false,
     this.poolIds = const [],
+    this.parentId,
+    this.childrenIds = const [],
   });
+
+  bool get hasPools => poolIds.isNotEmpty;
+  bool get hasParent => parentId != null;
+  bool get hasChildren => childrenIds.isNotEmpty;
+  bool get hasRelationships => hasParent || hasChildren;
+
+  static int? _parsePositiveInt(dynamic raw) {
+    if (raw == null) return null;
+    final val = raw is num ? raw.toInt() : int.tryParse(raw.toString());
+    return (val != null && val > 0) ? val : null;
+  }
+
+  static List<int> _parsePositiveIntList(dynamic raw) {
+    if (raw is List) {
+      return raw
+          .map(_parsePositiveInt)
+          .whereType<int>()
+          .toList();
+    }
+    if (raw is String && raw.trim().isNotEmpty) {
+      return raw
+          .trim()
+          .split(RegExp(r'[\s,]+'))
+          .map(_parsePositiveInt)
+          .whereType<int>()
+          .toList();
+    }
+    return const [];
+  }
 
   Set<String>? _cachedAllTags;
 
@@ -202,10 +235,22 @@ class E621Post {
 
     final rating = json['rating']?.toString() ?? '';
     final description = json['description']?.toString() ?? '';
-    final rawPools = json['pools'];
-    final List<int> poolIds = rawPools is List
-        ? rawPools.whereType<num>().map((e) => e.toInt()).toList()
-        : const [];
+    final List<int> poolIds = _parsePositiveIntList(json['pools'] ?? json['poolIds']);
+
+    int? parentId;
+    List<int> childrenIds = const [];
+    final rel = json['relationships'];
+    if (rel is Map) {
+      parentId = _parsePositiveInt(rel['parent_id'] ?? rel['parentId']);
+      childrenIds = _parsePositiveIntList(
+        rel['children'] ?? rel['children_ids'] ?? rel['childrenIds'],
+      );
+    } else {
+      parentId = _parsePositiveInt(json['parent_id'] ?? json['parentId']);
+      childrenIds = _parsePositiveIntList(
+        json['children'] ?? json['children_ids'] ?? json['childrenIds'],
+      );
+    }
 
     return E621Post(
       id: (json['id'] as num?)?.toInt() ?? 0,
@@ -223,6 +268,8 @@ class E621Post {
       description: description,
       isFavorited: isFavorited,
       poolIds: poolIds,
+      parentId: parentId,
+      childrenIds: childrenIds,
     );
   }
 
@@ -298,11 +345,12 @@ class E621Post {
       'description': description,
       'isFavorited': isFavorited,
       'poolIds': poolIds,
+      'parentId': parentId,
+      'childrenIds': childrenIds,
     };
   }
 
   factory E621Post.fromLocalJson(Map<String, dynamic> json) {
-    final rawPools = json['poolIds'];
     return E621Post(
       id: (json['id'] as num?)?.toInt() ?? 0,
       previewUrl: json['previewUrl'] as String?,
@@ -318,9 +366,9 @@ class E621Post {
       rating: json['rating']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       isFavorited: json['isFavorited'] == true,
-      poolIds: rawPools is List
-          ? rawPools.whereType<num>().map((e) => e.toInt()).toList()
-          : const [],
+      poolIds: _parsePositiveIntList(json['poolIds'] ?? json['pools']),
+      parentId: _parsePositiveInt(json['parentId'] ?? json['parent_id']),
+      childrenIds: _parsePositiveIntList(json['childrenIds'] ?? json['children']),
     );
   }
 }

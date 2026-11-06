@@ -119,8 +119,7 @@ void main() {
       final code = BoardShareService.encodeRefBoard(refBoard, author: 'ArtistA');
       expect(code.startsWith('SKER-R1:'), isTrue);
 
-      final deepLink = BoardShareService.buildDeepLink(code);
-      final decoded = BoardShareService.tryDecodeAny(deepLink);
+      final decoded = BoardShareService.tryDecodeAny(code);
 
       expect(decoded, isNotNull);
       expect(decoded!.isRefCanvas, isTrue);

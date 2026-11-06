@@ -221,11 +221,65 @@ young
       expect(provider.filterPools([cleanPool, dirtyPool]), hasLength(2));
     });
 
+    test('hides empty pools and sets on safe mode by default, and shows them when toggled off', () async {
+      final safePost = _makePost(id: 1, rating: 's', general: ['dragon']);
+      final explicitPost = _makePost(id: 2, rating: 'e', general: ['dragon']);
+
+      final safePool = E621Collection(
+        type: CollectionType.pool,
+        id: 10,
+        name: 'Safe_Pool',
+        postCount: 1,
+        postIds: const [1],
+        posts: [safePost],
+      );
+      final nsfwOnlyPool = E621Collection(
+        type: CollectionType.pool,
+        id: 20,
+        name: 'NSFW_Only_Pool',
+        postCount: 1,
+        postIds: const [2],
+        posts: [explicitPost],
+      );
+      final emptySet = const E621Collection(
+        type: CollectionType.set,
+        id: 30,
+        name: 'Empty_Set',
+        postCount: 0,
+      );
+
+      expect(provider.hideEmptyCollections, isTrue);
+
+      // On e926 (isSafeMode: true), nsfwOnlyPool and emptySet have 0 viewable images
+      final safeModeFiltered = provider.filterPools(
+        [safePool, nsfwOnlyPool, emptySet],
+        isSafeMode: true,
+      );
+      expect(safeModeFiltered.map((c) => c.id).toList(), [10]);
+
+      // On e621 (isSafeMode: false), nsfwOnlyPool has a viewable image, only emptySet is hidden
+      final fullModeFiltered = provider.filterPools(
+        [safePool, nsfwOnlyPool, emptySet],
+        isSafeMode: false,
+      );
+      expect(fullModeFiltered.map((c) => c.id).toList(), [10, 20]);
+
+      // Turning hideEmptyCollections off shows all collections including empty ones
+      await provider.setHideEmptyCollections(false);
+      expect(provider.hideEmptyCollections, isFalse);
+      final allShown = provider.filterPools(
+        [safePool, nsfwOnlyPool, emptySet],
+        isSafeMode: true,
+      );
+      expect(allShown.map((c) => c.id).toList(), [10, 20, 30]);
+    });
+
     test('persists settings and rules across provider instances', () async {
       await provider.saveBlacklist('gore\nblood');
       await provider.setEnabled(true);
       await provider.setBlacklistPoolPosts(true);
       await provider.setHideBlacklistedPools(true);
+      await provider.setHideEmptyCollections(false);
 
       // Create new instance with same storage
       final newProvider = BlacklistProvider(storage: storage);
@@ -236,6 +290,7 @@ young
       expect(newProvider.isEnabled, isTrue);
       expect(newProvider.blacklistPoolPosts, isTrue);
       expect(newProvider.hideBlacklistedPools, isTrue);
+      expect(newProvider.hideEmptyCollections, isFalse);
     });
 
     test('resets to default and clears all', () async {
