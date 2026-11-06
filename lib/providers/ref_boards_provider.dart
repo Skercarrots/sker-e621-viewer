@@ -488,6 +488,42 @@ class RefBoardsProvider with ChangeNotifier {
     return duplicate;
   }
 
+  /// Imports a shared RefBoard (preserving all 2D item transforms and background settings)
+  Future<RefBoard> importSharedRefBoard({
+    required String name,
+    required List<RefBoardItem> items,
+    String backgroundColorHex = '#1E1E1E',
+    bool isLocked = false,
+  }) async {
+    final now = DateTime.now();
+    final trimmedName = name.trim().isEmpty ? 'Shared Ref Canvas' : name.trim();
+    final newId = '${now.microsecondsSinceEpoch}_${math.Random().nextInt(99999)}';
+
+    final clonedItems = <RefBoardItem>[];
+    for (int i = 0; i < items.length; i++) {
+      clonedItems.add(
+        items[i].copyWith(
+          id: 'item_${now.microsecondsSinceEpoch}_${i}_${math.Random().nextInt(9999)}',
+        ),
+      );
+    }
+
+    final imported = RefBoard(
+      id: newId,
+      name: trimmedName,
+      createdAt: now,
+      updatedAt: now,
+      items: clonedItems,
+      isLocked: isLocked,
+      backgroundColorHex: backgroundColorHex,
+    );
+
+    _refBoards.insert(0, imported);
+    await _persistBoards();
+    notifyListeners();
+    return imported;
+  }
+
   /// Look up a Ref Board by ID
   RefBoard? getRefBoardById(String boardId) {
     try {

@@ -252,6 +252,23 @@ class SettingsPage extends StatelessWidget {
             },
           ),
 
+          SwitchListTile(
+            secondary: const Icon(Icons.collections_bookmark_outlined, color: Colors.white),
+            title: const Text(
+              "Hide pools with blacklisted posts",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              "Enable to hide pools that contain blacklisted posts from results",
+              style: TextStyle(color: Colors.grey[400], fontSize: 13),
+            ),
+            value: blacklistProvider.hideBlacklistedPools,
+            activeThumbColor: Theme.of(context).colorScheme.primary,
+            onChanged: (val) {
+              blacklistProvider.setHideBlacklistedPools(val);
+            },
+          ),
+
           const Divider(color: Colors.white12, height: 28),
 
           // --- ACCOUNT SECTION ---

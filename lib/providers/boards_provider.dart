@@ -141,6 +141,33 @@ class BoardsProvider with ChangeNotifier {
     return newBoard;
   }
 
+  /// Imports a shared board with its full list of post IDs and hydrated posts
+  Future<Board> importSharedBoard({
+    required String name,
+    required List<int> postIds,
+    required List<E621Post> posts,
+  }) async {
+    final trimmedName = name.trim().isEmpty ? 'Shared Board' : name.trim();
+    final String id = DateTime.now().microsecondsSinceEpoch.toString();
+
+    final resolvedIds = postIds.isNotEmpty
+        ? List<int>.from(postIds)
+        : posts.map((p) => p.id).toList();
+
+    final newBoard = Board(
+      id: id,
+      name: trimmedName,
+      createdAt: DateTime.now(),
+      postIds: resolvedIds,
+      posts: List<E621Post>.from(posts),
+    );
+
+    _boards.insert(0, newBoard);
+    await _persistBoards();
+    notifyListeners();
+    return newBoard;
+  }
+
   /// Renames an existing board
   Future<bool> renameBoard(String boardId, String newName) async {
     final index = _boards.indexWhere((b) => b.id == boardId);

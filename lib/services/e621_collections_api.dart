@@ -44,6 +44,7 @@ class CollectionOrder {
 /// Thin client for e621 / e926 pools / post sets endpoints.
 class E621CollectionsApi {
   static const _maxIdsPerQuery = 100;
+  static const _maxPoolPostsToInspect = 25;
 
   final Map<String, String> headers;
   final http.Client _client;
@@ -150,15 +151,18 @@ class E621CollectionsApi {
   // ---------------------------------------------------------------- Posts
 
   /// Fetches posts by id (in batches of 100). Order is NOT preserved.
-  Future<Map<int, E621Post>> getPostsByIds(List<int> ids) async {
+  Future<Map<int, E621Post>> getPostsByIds(
+    List<int> ids, {
+    bool requirePreview = true,
+  }) async {
     final result = <int, E621Post>{};
     for (final chunk in _chunks(ids.toSet().toList())) {
       final body = await _get('/posts.json', {
-        'tags': 'id:${chunk.join(',')}',
+        'tags': 'id:${chunk.join(',')} status:any',
         'limit': '${chunk.length}',
       });
       if (body == null) continue;
-      for (final post in _parsePosts(body)) {
+      for (final post in _parsePosts(body, requirePreview: requirePreview)) {
         result[post.id] = post;
       }
     }
@@ -182,24 +186,50 @@ class E621CollectionsApi {
     return body == null ? const [] : _parsePosts(body);
   }
 
-  /// Resolves cover images for a page of collections with a single
-  /// `posts.json?tags=id:...` request instead of one request per card.
+  /// Resolves cover images and pool posts for a page of collections with
+  /// batched `posts.json?tags=id:...` requests instead of one request per card.
   Future<List<E621Collection>> attachCovers(List<E621Collection> collections) async {
-    final ids = collections
-        .where((c) => c.coverUrl == null && c.coverPostId != null)
-        .map((c) => c.coverPostId!)
-        .toList();
+    final ids = <int>{};
+    for (final c in collections) {
+      if (c.isPool && c.postIds.isNotEmpty) {
+        ids.addAll(c.postIds.take(_maxPoolPostsToInspect));
+      }
+      if (c.coverUrl == null && c.coverPostId != null) {
+        ids.add(c.coverPostId!);
+      }
+    }
     if (ids.isEmpty) return collections;
-    final posts = await getPostsByIds(ids);
+    final posts = await getPostsByIds(ids.toList(), requirePreview: false);
+    final isSafeMode = _host == 'e926.net';
+
     return collections.map((c) {
-      final post = posts[c.coverPostId];
-      return post?.previewUrl != null ? c.copyWith(coverUrl: post!.previewUrl) : c;
+      final coverPost = c.coverPostId != null ? posts[c.coverPostId] : null;
+      final validCoverUrl = (coverPost?.previewUrl != null &&
+              (!isSafeMode || coverPost!.rating.toLowerCase() == 's'))
+          ? coverPost?.previewUrl
+          : c.coverUrl;
+
+      if (c.isPool) {
+        final poolPosts = c.postIds
+            .map((id) => posts[id])
+            .whereType<E621Post>()
+            .toList();
+        if (poolPosts.isEmpty && coverPost != null) {
+          poolPosts.add(coverPost);
+        }
+        return c.copyWith(
+          coverUrl: validCoverUrl,
+          posts: poolPosts.isNotEmpty ? poolPosts : c.posts,
+        );
+      }
+
+      return validCoverUrl != null ? c.copyWith(coverUrl: validCoverUrl) : c;
     }).toList();
   }
 
   // -------------------------------------------------------------- Helpers
 
-  List<E621Post> _parsePosts(String body) {
+  List<E621Post> _parsePosts(String body, {bool requirePreview = true}) {
     final dynamic data = jsonDecode(body);
     final List<dynamic> list = (data is List)
         ? data
@@ -208,7 +238,9 @@ class E621CollectionsApi {
     return list
         .whereType<Map<String, dynamic>>()
         .map(E621Post.fromJson)
-        .where((p) => p.previewUrl != null && (!isSafeMode || p.rating.toLowerCase() == 's'))
+        .where((p) =>
+            !requirePreview ||
+            (p.previewUrl != null && (!isSafeMode || p.rating.toLowerCase() == 's')))
         .toList();
   }
 

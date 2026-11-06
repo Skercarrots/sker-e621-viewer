@@ -9,6 +9,7 @@ import '../providers/ref_boards_provider.dart';
 import '../providers/boards_provider.dart';
 import '../providers/auth_provider.dart';
 import '../services/download_service.dart';
+import '../widgets/board_share_sheets.dart';
 import 'details_page.dart';
 
 class RefCanvasPage extends StatefulWidget {
@@ -129,6 +130,7 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
   Widget build(BuildContext context) {
     final refProvider = Provider.of<RefBoardsProvider>(context);
     final boardsProvider = Provider.of<BoardsProvider>(context);
+    final auth = Provider.of<AuthProvider>(context, listen: false);
     final board = refProvider.getRefBoardById(widget.boardId);
 
     if (board == null) {
@@ -163,6 +165,15 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
               ),
               actions: [
                 IconButton(
+                  icon: const Icon(Icons.share_outlined, color: Colors.cyanAccent),
+                  tooltip: 'Share Ref Canvas',
+                  onPressed: () => showShareRefCanvasSheet(
+                    context,
+                    board,
+                    author: auth.isLoggedIn ? auth.user?.name : null,
+                  ),
+                ),
+                IconButton(
                   icon: Icon(board.isLocked ? Icons.lock : Icons.lock_open_outlined),
                   color: board.isLocked ? Colors.amberAccent : Colors.grey[400],
                   tooltip: board.isLocked ? 'Unlock Canvas' : 'Lock Canvas (Prevent Movement)',
@@ -191,7 +202,13 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert),
                   onSelected: (val) {
-                    if (val == 'reset') {
+                    if (val == 'share') {
+                      showShareRefCanvasSheet(
+                        context,
+                        board,
+                        author: auth.isLoggedIn ? auth.user?.name : null,
+                      );
+                    } else if (val == 'reset') {
                       _resetZoom();
                     } else if (val == 'rename') {
                       _showRenameDialog(refProvider, board);
@@ -200,6 +217,16 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
                     }
                   },
                   itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'share',
+                      child: Row(
+                        children: [
+                          Icon(Icons.share_outlined, size: 20, color: Colors.cyanAccent),
+                          SizedBox(width: 8),
+                          Text('Share Ref Canvas'),
+                        ],
+                      ),
+                    ),
                     const PopupMenuItem(
                       value: 'reset',
                       child: Row(
@@ -263,40 +290,28 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
                     ),
                     if (sortedItems.isEmpty)
                       Positioned(
-                        left: 200,
-                        top: 200,
+                        left: 120,
+                        top: 120,
                         child: Container(
-                          padding: const EdgeInsets.all(24),
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                           decoration: BoxDecoration(
-                            color: Colors.grey[900]?.withValues(alpha: 0.8),
-                            borderRadius: BorderRadius.circular(16),
+                            color: Colors.grey[900]?.withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(14),
                             border: Border.all(color: Colors.grey[800]!),
                           ),
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Row(
-                                children: [
-                                  Icon(Icons.draw, color: Colors.blueAccent, size: 28),
-                                  SizedBox(width: 12),
-                                  Text(
-                                    'Reference Canvas',
-                                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                                  ),
-                                ],
+                              Icon(Icons.draw_outlined, color: Colors.grey[500], size: 32),
+                              const SizedBox(height: 8),
+                              const Text(
+                                'Empty canvas',
+                                style: TextStyle(fontSize: 15, color: Colors.white70),
                               ),
                               const SizedBox(height: 12),
-                              Text(
-                                '• Tap the + icon to add arts or import entire saved boards.\n'
-                                '• Pan with touch/mouse, zoom in/out to inspect details.\n'
-                                '• Tap any art to flip horizontally, vertically, or toggle grayscale.\n'
-                                '• Hit Fullscreen to hide all UI while drawing!',
-                                style: TextStyle(color: Colors.grey[400], height: 1.5),
-                              ),
-                              const SizedBox(height: 16),
                               ElevatedButton.icon(
-                                icon: const Icon(Icons.add),
-                                label: const Text('Add References Now'),
+                                icon: const Icon(Icons.add, size: 18),
+                                label: const Text('Add References'),
                                 onPressed: () => _showAddContentSheet(refProvider, boardsProvider, board),
                               ),
                             ],

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/collection_model.dart';
 import '../providers/auth_provider.dart';
+import '../providers/blacklist_provider.dart';
 import '../providers/follows_provider.dart';
 import '../services/e621_collections_api.dart';
 import '../widgets/collection_card.dart';
@@ -435,6 +436,12 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
           }
           _isLoading = false;
         });
+
+        final bl = Provider.of<BlacklistProvider>(context, listen: false);
+        final visibleCount = bl.filterPools(_pools).length;
+        if (visibleCount < 6 && _page <= 4 && results.isNotEmpty && _hasMore) {
+          _fetchPools();
+        }
       }
     } catch (e) {
       debugPrint('Error fetching pools: $e');
@@ -446,6 +453,7 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
   Widget build(BuildContext context) {
     super.build(context);
     final auth = Provider.of<AuthProvider>(context);
+    final blacklist = Provider.of<BlacklistProvider>(context);
     if (_lastHost != null && _lastHost != auth.host) {
       _lastHost = auth.host;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -455,6 +463,8 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
         }
       });
     }
+
+    final visiblePools = blacklist.filterPools(_pools);
 
     return Column(
       children: [
@@ -536,10 +546,16 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
         Expanded(
           child: RefreshIndicator(
             onRefresh: () => _fetchPools(reset: true),
-            child: _pools.isEmpty && _isLoading
+            child: visiblePools.isEmpty && _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _pools.isEmpty
-                    ? const Center(child: Text('No pools found.'))
+                : visiblePools.isEmpty
+                    ? Center(
+                        child: Text(
+                          _pools.isNotEmpty
+                              ? 'All ${_pools.length} pools hidden by blacklist.'
+                              : 'No pools found.',
+                        ),
+                      )
                     : GridView.builder(
                         controller: _scrollController,
                         physics: const AlwaysScrollableScrollPhysics(),
@@ -550,12 +566,12 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
                           mainAxisSpacing: 12.0,
                           childAspectRatio: 0.82,
                         ),
-                        itemCount: _pools.length + (_isLoading ? 1 : 0),
+                        itemCount: visiblePools.length + (_isLoading ? 1 : 0),
                         itemBuilder: (context, index) {
-                          if (index == _pools.length) {
+                          if (index == visiblePools.length) {
                             return const Center(child: CircularProgressIndicator());
                           }
-                          return CollectionCard(collection: _pools[index]);
+                          return CollectionCard(collection: visiblePools[index]);
                         },
                       ),
           ),

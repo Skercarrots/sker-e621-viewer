@@ -27,6 +27,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
       'col-${widget.collection.type.name}-${widget.collection.id}-${identityHashCode(this)}';
 
   final List<E621Post> _posts = [];
+  final List<E621Post> _visiblePosts = [];
   final ScrollController _scrollController = ScrollController();
 
   bool _isLoading = false;
@@ -135,8 +136,12 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
       }
 
       if (mounted) {
+        final bl = Provider.of<BlacklistProvider>(context, listen: false);
         setState(() {
           _posts.addAll(newPosts);
+          _visiblePosts
+            ..clear()
+            ..addAll(bl.filterPosts(_posts, isPool: _collection.isPool));
           _isLoading = false;
         });
 
@@ -148,6 +153,11 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
           if (follows.isFollowing(updated.type, updated.id)) {
             follows.updateCollectionInfo(updated);
           }
+        }
+
+        // If too few items are visible to scroll, continue fetching next batch
+        if (_visiblePosts.length < 15 && _hasMore && newPosts.isNotEmpty) {
+          _fetchMorePosts();
         }
       }
     } catch (e) {
@@ -428,7 +438,10 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
   @override
   Widget build(BuildContext context) {
     final blacklist = Provider.of<BlacklistProvider>(context);
-    final visiblePosts = blacklist.filterPosts(_posts, isPool: _collection.isPool);
+    _visiblePosts
+      ..clear()
+      ..addAll(blacklist.filterPosts(_posts, isPool: _collection.isPool));
+    final visiblePosts = _visiblePosts;
 
     return Scaffold(
       appBar: AppBar(

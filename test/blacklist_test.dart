@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:skerdev_e621/models/collection_model.dart';
 import 'package:skerdev_e621/models/post_model.dart';
 import 'package:skerdev_e621/providers/blacklist_provider.dart';
 
@@ -83,6 +84,7 @@ void main() {
       expect(provider.ruleCount, 4);
       expect(provider.isEnabled, isTrue);
       expect(provider.blacklistPoolPosts, isFalse);
+      expect(provider.hideBlacklistedPools, isFalse);
     });
 
     test('matches single tag rule', () {
@@ -180,10 +182,50 @@ young
       expect(provider.filterPosts([poolPost], isPool: true), isEmpty);
     });
 
+    test('hides pools with blacklisted posts when hideBlacklistedPools is enabled', () async {
+      final cleanPost = _makePost(id: 1, general: ['dragon', 'comic']);
+      final blacklistedPost = _makePost(id: 2, general: ['dragon', 'scat']);
+
+      final cleanPool = E621Collection(
+        type: CollectionType.pool,
+        id: 10,
+        name: 'Clean_Comic',
+        postIds: const [1],
+        posts: [cleanPost],
+      );
+      final dirtyPool = E621Collection(
+        type: CollectionType.pool,
+        id: 20,
+        name: 'Dirty_Comic',
+        postIds: const [1, 2],
+        posts: [cleanPost, blacklistedPost],
+      );
+
+      // By default, hideBlacklistedPools is false -> both pools are kept
+      expect(provider.hideBlacklistedPools, isFalse);
+      expect(provider.isPoolBlacklisted(dirtyPool), isFalse);
+      expect(provider.filterPools([cleanPool, dirtyPool]), hasLength(2));
+
+      // Enable hiding pools with blacklisted posts
+      await provider.setHideBlacklistedPools(true);
+      expect(provider.hideBlacklistedPools, isTrue);
+      expect(provider.isPoolBlacklisted(cleanPool), isFalse);
+      expect(provider.isPoolBlacklisted(dirtyPool), isTrue);
+
+      final filtered = provider.filterPools([cleanPool, dirtyPool]);
+      expect(filtered, hasLength(1));
+      expect(filtered.first.id, 10);
+
+      // Disabling global blacklist also disables hiding pools
+      await provider.setEnabled(false);
+      expect(provider.filterPools([cleanPool, dirtyPool]), hasLength(2));
+    });
+
     test('persists settings and rules across provider instances', () async {
       await provider.saveBlacklist('gore\nblood');
       await provider.setEnabled(true);
       await provider.setBlacklistPoolPosts(true);
+      await provider.setHideBlacklistedPools(true);
 
       // Create new instance with same storage
       final newProvider = BlacklistProvider(storage: storage);
@@ -193,6 +235,7 @@ young
       expect(newProvider.ruleCount, 2);
       expect(newProvider.isEnabled, isTrue);
       expect(newProvider.blacklistPoolPosts, isTrue);
+      expect(newProvider.hideBlacklistedPools, isTrue);
     });
 
     test('resets to default and clears all', () async {
@@ -206,6 +249,59 @@ young
       await provider.clearAll();
       expect(provider.rawBlacklist, '');
       expect(provider.ruleCount, 0);
+    });
+
+    test('E621Post.fromJson reconstructs URLs from md5 when server nulls url on non-deleted posts', () {
+      final serverFilteredJson = {
+        'id': 6834002,
+        'rating': 'e',
+        'flags': {'deleted': false},
+        'file': {
+          'ext': 'png',
+          'md5': 'fe1f3cffeac480b5377023c6168b0b92',
+          'url': null,
+        },
+        'sample': {
+          'has': true,
+          'url': null,
+        },
+        'preview': {
+          'url': null,
+        },
+        'tags': {
+          'general': ['dragon'],
+          'meta': ['young'],
+        },
+      };
+
+      final post = E621Post.fromJson(serverFilteredJson);
+      expect(
+        post.fileUrl,
+        'https://static1.e621.net/data/fe/1f/fe1f3cffeac480b5377023c6168b0b92.png',
+      );
+      expect(
+        post.previewUrl,
+        'https://static1.e621.net/data/sample/fe/1f/fe1f3cffeac480b5377023c6168b0b92.jpg',
+      );
+      expect(post.allTags, containsAll(['dragon', 'young']));
+
+      // Deleted posts must NOT reconstruct URLs
+      final deletedJson = {
+        'id': 5030085,
+        'rating': 's',
+        'flags': {'deleted': true},
+        'file': {
+          'ext': 'jpg',
+          'md5': '0718e3f94c98bafd3f42eb90be11ccdf',
+          'url': null,
+        },
+        'sample': {'has': true, 'url': null},
+        'preview': {'url': null},
+        'tags': {'general': ['canine']},
+      };
+      final deletedPost = E621Post.fromJson(deletedJson);
+      expect(deletedPost.fileUrl, isNull);
+      expect(deletedPost.previewUrl, isNull);
     });
   });
 }

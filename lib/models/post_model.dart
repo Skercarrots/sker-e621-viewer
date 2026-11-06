@@ -61,14 +61,25 @@ class E621Post {
     String? fileUrl;
     String? previewUrl;
     String ext = '';
+    String? md5;
+
+    final bool isDeleted = (json['flags'] is Map && json['flags']['deleted'] == true) ||
+        (json['files'] is Map &&
+            json['files']['flags'] is Map &&
+            json['files']['flags']['deleted'] == true);
 
     if (json['files'] is Map) {
       final files = json['files'] as Map<String, dynamic>;
 
       // Meta (ext, size, md5, etc.)
       final meta = files['meta'] as Map<String, dynamic>?;
-      if (meta != null && meta['ext'] != null) {
-        ext = meta['ext'].toString();
+      if (meta != null) {
+        if (meta['ext'] != null) {
+          ext = meta['ext'].toString();
+        }
+        if (meta['md5'] != null) {
+          md5 = meta['md5'].toString();
+        }
       }
 
       // Original file
@@ -84,18 +95,47 @@ class E621Post {
       previewUrl = sample?['jpg'] as String? ??
           sample?['webp'] as String? ??
           preview?['jpg'] as String? ??
-          preview?['webp'] as String? ??
-          fileUrl;
+          preview?['webp'] as String?;
     }
 
     // Fallback to legacy v1 structure if fields were not extracted from v2 'files'
-    fileUrl ??= json['file']?['url'] as String?;
-    if (ext.isEmpty) {
-      ext = json['file']?['ext']?.toString() ?? '';
+    if (json['file'] is Map) {
+      fileUrl ??= json['file']['url'] as String?;
+      if (ext.isEmpty && json['file']['ext'] != null) {
+        ext = json['file']['ext'].toString();
+      }
+      md5 ??= json['file']['md5']?.toString();
     }
-    previewUrl ??= json['sample']?['url'] as String? ??
-        json['preview']?['url'] as String? ??
-        fileUrl;
+
+    previewUrl ??= (json['sample'] is Map ? json['sample']['url'] as String? : null) ??
+        (json['preview'] is Map ? json['preview']['url'] as String? : null);
+
+    // Reconstruct CDN URLs from md5 + ext when e621's server-side global filter
+    // sets url fields to null on non-deleted posts.
+    if (!isDeleted && md5 != null && md5.length >= 4) {
+      final sub = '${md5.substring(0, 2)}/${md5.substring(2, 4)}/$md5';
+      if (fileUrl == null && ext.isNotEmpty) {
+        fileUrl = 'https://static1.e621.net/data/$sub.$ext';
+      }
+      if (previewUrl == null) {
+        final hasSample = json['sample'] is Map && json['sample']['has'] == true;
+        final isVideoOrFlash = ext == 'webm' || ext == 'mp4' || ext == 'swf';
+        if (hasSample && !isVideoOrFlash) {
+          previewUrl = 'https://static1.e621.net/data/sample/$sub.jpg';
+        } else {
+          previewUrl = 'https://static1.e621.net/data/preview/$sub.jpg';
+        }
+      }
+    }
+
+    // Fallback previewUrl to fileUrl for static images
+    if (previewUrl == null &&
+        fileUrl != null &&
+        ext != 'webm' &&
+        ext != 'mp4' &&
+        ext != 'swf') {
+      previewUrl = fileUrl;
+    }
 
     // Additional fallback for extension if missing
     if (ext.isEmpty && fileUrl != null) {
@@ -122,7 +162,11 @@ class E621Post {
       characterTags = List<String>.from(rawTags['character'] ?? []);
       speciesTags = List<String>.from(rawTags['species'] ?? []);
       copyrightTags = List<String>.from(rawTags['copyright'] ?? []);
-      generalTags = List<String>.from(rawTags['general'] ?? []);
+      generalTags = [
+        ...List<String>.from(rawTags['general'] ?? []),
+        ...List<String>.from(rawTags['meta'] ?? []),
+        ...List<String>.from(rawTags['lore'] ?? []),
+      ];
     } else if (rawTags is List) {
       // In v2 mode=basic or thumbnails, tags are a flat array
       generalTags = rawTags.map((e) => e.toString()).toList();

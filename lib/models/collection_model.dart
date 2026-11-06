@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'post_model.dart';
 
 /// The two kinds of community collections on e621.
 enum CollectionType { pool, set }
@@ -35,6 +36,9 @@ class E621Collection {
   /// Resolved preview/sample URL of [coverPostId].
   final String? coverUrl;
 
+  /// Resolved posts belonging to this collection (used for blacklist checks).
+  final List<E621Post> posts;
+
   const E621Collection({
     required this.type,
     required this.id,
@@ -49,6 +53,7 @@ class E621Collection {
     this.postIds = const [],
     this.coverPostId,
     this.coverUrl,
+    this.posts = const [],
   });
 
   bool get isPool => type == CollectionType.pool;
@@ -114,6 +119,7 @@ class E621Collection {
     List<int>? postIds,
     int? coverPostId,
     String? coverUrl,
+    List<E621Post>? posts,
   }) {
     return E621Collection(
       type: type,
@@ -129,6 +135,7 @@ class E621Collection {
       postIds: postIds ?? this.postIds,
       coverPostId: coverPostId ?? this.coverPostId,
       coverUrl: coverUrl ?? this.coverUrl,
+      posts: posts ?? this.posts,
     );
   }
 

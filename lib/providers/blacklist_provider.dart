@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../models/collection_model.dart';
 import '../models/post_model.dart';
 
 /// Represents a single parsed blacklist rule (one line).
@@ -83,12 +84,14 @@ class BlacklistProvider with ChangeNotifier {
   static const String storageKeyTags = 'blacklist_tags';
   static const String storageKeyEnabled = 'blacklist_enabled';
   static const String storageKeyPoolPosts = 'blacklist_pool_posts';
+  static const String storageKeyHideBlacklistedPools = 'blacklist_hide_pools';
 
   static const String defaultBlacklist = 'young\nscat\nwatersports\nbestiality';
 
   String _rawBlacklist = defaultBlacklist;
   bool _isEnabled = true;
   bool _blacklistPoolPosts = false;
+  bool _hideBlacklistedPools = false;
   bool _isLoaded = false;
 
   List<BlacklistRule> _parsedRules = [];
@@ -101,6 +104,7 @@ class BlacklistProvider with ChangeNotifier {
   String get rawBlacklist => _rawBlacklist;
   bool get isEnabled => _isEnabled;
   bool get blacklistPoolPosts => _blacklistPoolPosts;
+  bool get hideBlacklistedPools => _hideBlacklistedPools;
   bool get isLoaded => _isLoaded;
   List<BlacklistRule> get parsedRules => List.unmodifiable(_parsedRules);
   int get ruleCount => _parsedRules.length;
@@ -169,6 +173,14 @@ class BlacklistProvider with ChangeNotifier {
         await _storage.write(key: storageKeyPoolPosts, value: 'false');
       }
 
+      final savedHidePools = await _storage.read(key: storageKeyHideBlacklistedPools);
+      if (savedHidePools != null) {
+        _hideBlacklistedPools = savedHidePools == 'true';
+      } else {
+        _hideBlacklistedPools = false;
+        await _storage.write(key: storageKeyHideBlacklistedPools, value: 'false');
+      }
+
       _parseRules(_rawBlacklist);
       _isLoaded = true;
       _safeNotify();
@@ -202,6 +214,17 @@ class BlacklistProvider with ChangeNotifier {
     if (_blacklistPoolPosts == enabled) return;
     _blacklistPoolPosts = enabled;
     await _storage.write(key: storageKeyPoolPosts, value: enabled ? 'true' : 'false');
+    _safeNotify();
+  }
+
+  /// Toggles whether pools containing blacklisted posts are hidden from pool results
+  Future<void> setHideBlacklistedPools(bool enabled) async {
+    if (_hideBlacklistedPools == enabled) return;
+    _hideBlacklistedPools = enabled;
+    await _storage.write(
+      key: storageKeyHideBlacklistedPools,
+      value: enabled ? 'true' : 'false',
+    );
     _safeNotify();
   }
 
@@ -252,6 +275,33 @@ class BlacklistProvider with ChangeNotifier {
       }
     }
     return count;
+  }
+
+  /// Checks if a pool contains any post matching the active blacklist rules.
+  bool isPoolBlacklisted(E621Collection pool, {Iterable<E621Post>? posts}) {
+    if (!_isEnabled || !_hideBlacklistedPools) return false;
+    if (!pool.isPool) return false;
+    if (_parsedRules.isEmpty) return false;
+
+    final postsToCheck = posts ?? pool.posts;
+    for (final post in postsToCheck) {
+      final tags = post.allTags;
+      for (final rule in _parsedRules) {
+        if (rule.matches(post, tags)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Filters a list of collections/pools, removing pools that contain blacklisted posts
+  /// when [hideBlacklistedPools] is enabled.
+  List<E621Collection> filterPools(List<E621Collection> pools) {
+    if (!_isEnabled || !_hideBlacklistedPools || _parsedRules.isEmpty) {
+      return pools;
+    }
+    return pools.where((pool) => !isPoolBlacklisted(pool)).toList();
   }
 }
 

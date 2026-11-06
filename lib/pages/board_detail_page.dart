@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/board_model.dart';
+import '../providers/auth_provider.dart';
 import '../providers/boards_provider.dart';
 import '../providers/ref_boards_provider.dart';
+import '../widgets/board_share_sheets.dart';
 import 'details_page.dart';
 import 'ref_canvas_page.dart';
 
@@ -87,6 +89,7 @@ class BoardDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final boardsProvider = Provider.of<BoardsProvider>(context);
+    final auth = Provider.of<AuthProvider>(context, listen: false);
     final board = boardsProvider.getBoardById(boardId);
 
     if (board == null) {
@@ -110,6 +113,15 @@ class BoardDetailPage extends StatelessWidget {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.share_outlined),
+            tooltip: 'Share Board',
+            onPressed: () => showShareBoardSheet(
+              context,
+              board,
+              author: auth.isLoggedIn ? auth.user?.name : null,
+            ),
+          ),
+          IconButton(
             icon: const Icon(Icons.draw, color: Colors.cyanAccent),
             tooltip: 'Open as Reference Canvas',
             onPressed: () async {
@@ -126,7 +138,13 @@ class BoardDetailPage extends StatelessWidget {
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) async {
-              if (value == 'open_ref') {
+              if (value == 'share') {
+                showShareBoardSheet(
+                  context,
+                  board,
+                  author: auth.isLoggedIn ? auth.user?.name : null,
+                );
+              } else if (value == 'open_ref') {
                 final refProvider = Provider.of<RefBoardsProvider>(context, listen: false);
                 final refBoard = await refProvider.createFromSavedBoard(board);
                 if (context.mounted) {
@@ -142,6 +160,16 @@ class BoardDetailPage extends StatelessWidget {
               }
             },
             itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'share',
+                child: Row(
+                  children: [
+                    Icon(Icons.share_outlined, size: 20),
+                    SizedBox(width: 8),
+                    Text('Share Board'),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: 'open_ref',
                 child: Row(
@@ -178,29 +206,25 @@ class BoardDetailPage extends StatelessWidget {
       ),
       body: board.posts.isEmpty
           ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.collections_bookmark_outlined,
-                      size: 64,
-                      color: Colors.grey[600],
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'This board is empty',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Browse the gallery and tap the bookmark icon on any post to save it to "${board.name}".',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey[400], fontSize: 14),
-                    ),
-                  ],
-                ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.collections_bookmark_outlined,
+                    size: 56,
+                    color: Colors.grey[600],
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    'Empty board',
+                    style: TextStyle(fontSize: 16, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Save posts from the gallery to add them here.',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                  ),
+                ],
               ),
             )
           : GridView.builder(
