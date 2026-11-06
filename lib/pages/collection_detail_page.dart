@@ -305,14 +305,21 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
                     const SizedBox(height: 6),
 
                     // Stats & Creator
-                    Text(
-                      '${_collection.postCount} arts'
-                      '${_collection.creatorName != null && _collection.creatorName!.isNotEmpty ? " • by ${_collection.creatorName}" : ""}',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: Colors.grey[400],
-                        fontWeight: FontWeight.w500,
-                      ),
+                    Builder(
+                      builder: (context) {
+                        final postsForFav = _posts.isNotEmpty ? _posts : _collection.posts;
+                        final totalFavs = postsForFav.fold<int>(0, (sum, p) => sum + p.favCount);
+                        return Text(
+                          '${_collection.postCount} arts'
+                          '${totalFavs > 0 ? " • ♥ $totalFavs favs" : ""}'
+                          '${_collection.creatorName != null && _collection.creatorName!.isNotEmpty ? " • by ${_collection.creatorName}" : ""}',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: Colors.grey[400],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),

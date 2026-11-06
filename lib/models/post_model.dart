@@ -13,6 +13,7 @@ class E621Post {
   final String rating;
   final String description;
   final bool isFavorited;
+  final List<int> poolIds;
 
   E621Post({
     required this.id,
@@ -29,6 +30,7 @@ class E621Post {
     this.rating = '',
     this.description = '',
     this.isFavorited = false,
+    this.poolIds = const [],
   });
 
   Set<String>? _cachedAllTags;
@@ -200,6 +202,10 @@ class E621Post {
 
     final rating = json['rating']?.toString() ?? '';
     final description = json['description']?.toString() ?? '';
+    final rawPools = json['pools'];
+    final List<int> poolIds = rawPools is List
+        ? rawPools.whereType<num>().map((e) => e.toInt()).toList()
+        : const [];
 
     return E621Post(
       id: (json['id'] as num?)?.toInt() ?? 0,
@@ -216,7 +222,62 @@ class E621Post {
       rating: rating,
       description: description,
       isFavorited: isFavorited,
+      poolIds: poolIds,
     );
+  }
+
+  /// Checks whether this post matches all tokens in a keyword/tag [query].
+  /// Returns `false` if [query] is empty.
+  bool matchesKeywordQuery(String query) {
+    final trimmed = query.trim().toLowerCase();
+    if (trimmed.isEmpty) return false;
+    final tokens = trimmed.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+    if (tokens.isEmpty) return false;
+    return tokens.every(matchesKeywordToken);
+  }
+
+  /// Checks whether this post matches a single keyword/tag [token].
+  bool matchesKeywordToken(String token) {
+    final lower = token.trim().toLowerCase();
+    if (lower.isEmpty) return true;
+    if ((lower.startsWith('-') || lower.startsWith('~')) && lower.length > 1) {
+      return !_matchesPositiveKeywordToken(lower.substring(1));
+    }
+    return _matchesPositiveKeywordToken(lower);
+  }
+
+  bool _matchesPositiveKeywordToken(String lower) {
+    final norm = lower.replaceAll(' ', '_');
+    final spaced = lower.replaceAll('_', ' ');
+    final tags = allTags;
+
+    if (norm.startsWith('rating:')) {
+      final r = norm.substring(7).trim();
+      final postRating = rating.toLowerCase();
+      if (r == 's' || r == 'safe') return postRating == 's' || postRating == 'safe';
+      if (r == 'q' || r == 'questionable') return postRating == 'q' || postRating == 'questionable';
+      if (r == 'e' || r == 'explicit') return postRating == 'e' || postRating == 'explicit';
+      return postRating == r;
+    }
+
+    if (norm.contains('*')) {
+      final escaped = RegExp.escape(norm).replaceAll(r'\*', '.*');
+      final regex = RegExp('^$escaped\$');
+      if (tags.any((t) => regex.hasMatch(t))) return true;
+    } else {
+      if (tags.contains(norm) || tags.any((t) => t.contains(norm))) {
+        return true;
+      }
+    }
+
+    if (description.isNotEmpty) {
+      final descLower = description.toLowerCase();
+      if (descLower.contains(spaced) || descLower.contains(norm)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   // --- Local Serialization for Guest Mode ---
@@ -236,10 +297,12 @@ class E621Post {
       'rating': rating,
       'description': description,
       'isFavorited': isFavorited,
+      'poolIds': poolIds,
     };
   }
 
   factory E621Post.fromLocalJson(Map<String, dynamic> json) {
+    final rawPools = json['poolIds'];
     return E621Post(
       id: (json['id'] as num?)?.toInt() ?? 0,
       previewUrl: json['previewUrl'] as String?,
@@ -255,6 +318,9 @@ class E621Post {
       rating: json['rating']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       isFavorited: json['isFavorited'] == true,
+      poolIds: rawPools is List
+          ? rawPools.whereType<num>().map((e) => e.toInt()).toList()
+          : const [],
     );
   }
 }

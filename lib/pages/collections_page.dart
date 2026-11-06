@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/collection_filters.dart';
 import '../models/collection_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/blacklist_provider.dart';
 import '../providers/follows_provider.dart';
 import '../services/e621_collections_api.dart';
 import '../widgets/collection_card.dart';
+import '../widgets/collection_search_controls.dart';
 import 'settings_page.dart';
 
 class CollectionsPage extends StatefulWidget {
@@ -373,11 +376,11 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
   bool _isLoading = false;
   bool _hasMore = true;
   int _page = 1;
+  int _generation = 0;
   String? _lastHost;
+  Timer? _searchDebounce;
 
-  // Filters
-  String? _category; // null: all, 'series', 'collection'
-  String _order = 'updated_at';
+  CollectionFilters _filters = const CollectionFilters();
 
   @override
   bool get wantKeepAlive => true;
@@ -398,54 +401,118 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
+  void _onSearchTextChanged() {
+    setState(() {});
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 450), () {
+      if (mounted) _fetchPools(reset: true);
+    });
+  }
+
+  void _setFilters(CollectionFilters next) {
+    _searchDebounce?.cancel();
+    setState(() => _filters = next.normalized(isPool: true));
+    _fetchPools(reset: true);
+  }
+
+  /// Pools that survive the blacklist, the local filters and the chosen order.
+  List<E621Collection> _visiblePools(BlacklistProvider blacklist, String query) {
+    final f = _filters;
+    final visible = blacklist
+        .filterPools(_pools)
+        .where((p) => f.passesLocal(p) && f.matchesQuery(p, query))
+        .toList();
+    return E621CollectionsApi.sortPools(
+      visible,
+      order: f.order,
+      query: query,
+      keywordSearch: f.isBroadSearch,
+    );
+  }
+
   Future<void> _fetchPools({bool reset = false}) async {
-    if (_isLoading) return;
+    if (reset) _searchDebounce?.cancel();
+    if (_isLoading && !reset) return;
     if (!reset && !_hasMore) return;
 
-    setState(() => _isLoading = true);
-    if (reset) {
-      _page = 1;
-      _hasMore = true;
+    // A reset supersedes any request still in flight.
+    final generation = reset ? ++_generation : _generation;
+    setState(() {
+      _isLoading = true;
+      if (reset) {
+        _page = 1;
+        _hasMore = true;
+        _pools.clear();
+      }
+    });
+    if (reset && _scrollController.hasClients) {
+      _scrollController.jumpTo(0);
     }
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
+    final activeQuery = _searchController.text.trim();
+    final f = _filters;
 
     try {
       final results = await api.searchPools(
-        query: _searchController.text.trim(),
-        category: _category,
-        order: _order,
+        query: activeQuery,
+        category: f.category,
+        order: f.order,
+        inName: f.inName,
+        inDescription: f.inDescription,
+        inPosts: f.inPosts,
+        creatorName: f.creator,
+        isActive: f.isActive,
         page: _page,
         limit: 20,
       );
 
-      if (mounted) {
-        setState(() {
-          if (reset) _pools.clear();
-          _pools.addAll(results);
-          if (results.length < 20) {
-            _hasMore = false;
-          } else {
-            _page++;
-          }
-          _isLoading = false;
-        });
+      if (!mounted || generation != _generation) return;
 
-        final bl = Provider.of<BlacklistProvider>(context, listen: false);
-        final visibleCount = bl.filterPools(_pools).length;
-        if (visibleCount < 6 && _page <= 4 && results.isNotEmpty && _hasMore) {
-          _fetchPools();
+      setState(() {
+        if (reset) _pools.clear();
+        final existingIds = _pools.map((p) => p.id).toSet();
+        for (final pool in results) {
+          if (!existingIds.contains(pool.id)) {
+            _pools.add(pool);
+            existingIds.add(pool.id);
+          }
         }
+        final sorted = E621CollectionsApi.sortPools(
+          _pools,
+          order: f.order,
+          query: activeQuery,
+          keywordSearch: f.isBroadSearch,
+        );
+        _pools
+          ..clear()
+          ..addAll(sorted);
+
+        if (results.length < 20) {
+          _hasMore = false;
+        } else {
+          _page++;
+        }
+        _isLoading = false;
+      });
+
+      // Strict filters can leave the screen almost empty: keep loading a few pages.
+      final bl = Provider.of<BlacklistProvider>(context, listen: false);
+      final visibleCount = _visiblePools(bl, activeQuery).length;
+      final maxPage = f.minPosts > 0 ? 10 : 4;
+      if (visibleCount < 6 && _page <= maxPage && results.isNotEmpty && _hasMore) {
+        _fetchPools();
       }
     } catch (e) {
       debugPrint('Error fetching pools: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && generation == _generation) setState(() => _isLoading = false);
     }
   }
 
@@ -464,82 +531,19 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
       });
     }
 
-    final visiblePools = blacklist.filterPools(_pools);
+    final activeQuery = _searchController.text.trim();
+    final showMatches = _filters.inPosts && activeQuery.isNotEmpty;
+    final visiblePools = _visiblePools(blacklist, activeQuery);
 
     return Column(
       children: [
-        // Search bar
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12.0, 10.0, 12.0, 6.0),
-          child: Container(
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.grey[850],
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search pools by name...',
-                hintStyle: TextStyle(color: Colors.grey[500], fontSize: 13.5),
-                border: InputBorder.none,
-                prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
-                        onPressed: () {
-                          _searchController.clear();
-                          _fetchPools(reset: true);
-                        },
-                      )
-                    : null,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              ),
-              onSubmitted: (_) => _fetchPools(reset: true),
-            ),
-          ),
-        ),
-
-        // Filters: Category chips + Sort dropdown
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
-          child: Row(
-            children: [
-              _buildCategoryChip(null, 'All'),
-              const SizedBox(width: 6),
-              _buildCategoryChip('series', 'Series'),
-              const SizedBox(width: 6),
-              _buildCategoryChip('collection', 'Collections'),
-              const Spacer(),
-              // Sort menu
-              PopupMenuButton<String>(
-                initialValue: _order,
-                icon: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.sort, size: 18, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text(
-                      CollectionOrder.pools
-                          .firstWhere((o) => o.value == _order)
-                          .label,
-                      style: TextStyle(fontSize: 11.5, color: Colors.grey[400]),
-                    ),
-                  ],
-                ),
-                onSelected: (val) {
-                  setState(() => _order = val);
-                  _fetchPools(reset: true);
-                },
-                itemBuilder: (context) => CollectionOrder.pools
-                    .map((o) => PopupMenuItem(
-                          value: o.value,
-                          child: Text(o.label, style: const TextStyle(fontSize: 13)),
-                        ))
-                    .toList(),
-              ),
-            ],
-          ),
+        CollectionSearchHeader(
+          controller: _searchController,
+          filters: _filters,
+          isPool: true,
+          onTextChanged: _onSearchTextChanged,
+          onSearch: () => _fetchPools(reset: true),
+          onFiltersChanged: _setFilters,
         ),
 
         // Grid
@@ -549,12 +553,11 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
             child: visiblePools.isEmpty && _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : visiblePools.isEmpty
-                    ? Center(
-                        child: Text(
-                          _pools.isNotEmpty
-                              ? 'All ${_pools.length} pools hidden by blacklist.'
-                              : 'No pools found.',
-                        ),
+                    ? _EmptyResults(
+                        noun: 'pools',
+                        hiddenCount: _pools.length,
+                        canReset: _filters.hasAdvanced,
+                        onReset: () => _setFilters(_filters.clearAdvanced()),
                       )
                     : GridView.builder(
                         controller: _scrollController,
@@ -571,7 +574,13 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
                           if (index == visiblePools.length) {
                             return const Center(child: CircularProgressIndicator());
                           }
-                          return CollectionCard(collection: visiblePools[index]);
+                          final pool = visiblePools[index];
+                          return CollectionCard(
+                            key: ValueKey(pool.key),
+                            collection: pool,
+                            keywordMatchCount:
+                                showMatches ? pool.keywordMatchCount(activeQuery) : null,
+                          );
                         },
                       ),
           ),
@@ -579,28 +588,53 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
       ],
     );
   }
+}
 
-  Widget _buildCategoryChip(String? category, String label) {
-    final isSelected = _category == category;
-    return ChoiceChip(
-      label: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11.5,
-          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          color: isSelected ? Colors.white : Colors.grey[400],
+/// Shown when a search has no visible results.
+class _EmptyResults extends StatelessWidget {
+  final String noun;
+  final int hiddenCount;
+  final bool canReset;
+  final VoidCallback onReset;
+
+  const _EmptyResults({
+    required this.noun,
+    required this.hiddenCount,
+    required this.canReset,
+    required this.onReset,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        SizedBox(height: MediaQuery.of(context).size.height * 0.1),
+        Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            children: [
+              Icon(Icons.search_off, size: 48, color: Colors.grey[600]),
+              const SizedBox(height: 14),
+              Text(
+                hiddenCount > 0
+                    ? 'All $hiddenCount $noun are hidden by your filters or blacklist.'
+                    : 'No $noun found.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey[400], fontSize: 14),
+              ),
+              if (canReset) ...[
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  onPressed: onReset,
+                  icon: const Icon(Icons.filter_alt_off_outlined, size: 18),
+                  label: const Text('Reset filters'),
+                ),
+              ],
+            ],
+          ),
         ),
-      ),
-      selected: isSelected,
-      onSelected: (_) {
-        setState(() => _category = category);
-        _fetchPools(reset: true);
-      },
-      selectedColor: Theme.of(context).colorScheme.primary,
-      backgroundColor: Colors.grey[850],
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      side: BorderSide(color: isSelected ? Colors.transparent : Colors.grey[800]!),
-      visualDensity: VisualDensity.compact,
+      ],
     );
   }
 }
@@ -623,8 +657,11 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
   bool _isLoading = false;
   bool _hasMore = true;
   int _page = 1;
-  String _order = 'updated_at';
+  int _generation = 0;
   String? _lastHost;
+  Timer? _searchDebounce;
+
+  CollectionFilters _filters = const CollectionFilters();
 
   @override
   bool get wantKeepAlive => true;
@@ -645,47 +682,113 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
+  void _onSearchTextChanged() {
+    setState(() {});
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 450), () {
+      if (mounted) _fetchSets(reset: true);
+    });
+  }
+
+  void _setFilters(CollectionFilters next) {
+    _searchDebounce?.cancel();
+    setState(() => _filters = next.normalized(isPool: false));
+    _fetchSets(reset: true);
+  }
+
+  List<E621Collection> _visibleSets(BlacklistProvider blacklist, String query) {
+    final f = _filters;
+    final visible = blacklist
+        .filterPools(_sets)
+        .where((s) => f.passesLocal(s) && f.matchesQuery(s, query))
+        .toList();
+    return E621CollectionsApi.sortPools(
+      visible,
+      order: f.order,
+      query: query,
+      keywordSearch: f.isBroadSearch,
+    );
+  }
+
   Future<void> _fetchSets({bool reset = false}) async {
-    if (_isLoading) return;
+    if (reset) _searchDebounce?.cancel();
+    if (_isLoading && !reset) return;
     if (!reset && !_hasMore) return;
 
-    setState(() => _isLoading = true);
-    if (reset) {
-      _page = 1;
-      _hasMore = true;
+    final generation = reset ? ++_generation : _generation;
+    setState(() {
+      _isLoading = true;
+      if (reset) {
+        _page = 1;
+        _hasMore = true;
+        _sets.clear();
+      }
+    });
+    if (reset && _scrollController.hasClients) {
+      _scrollController.jumpTo(0);
     }
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
     final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
+    final activeQuery = _searchController.text.trim();
+    final f = _filters;
 
     try {
       final results = await api.searchSets(
-        query: _searchController.text.trim(),
-        order: _order,
+        query: activeQuery,
+        creatorName: f.creator,
+        order: f.order,
+        inName: f.inName,
+        inDescription: f.inDescription,
+        inPosts: f.inPosts,
         page: _page,
         limit: 20,
       );
 
-      if (mounted) {
-        setState(() {
-          if (reset) _sets.clear();
-          _sets.addAll(results);
-          if (results.length < 20) {
-            _hasMore = false;
-          } else {
-            _page++;
+      if (!mounted || generation != _generation) return;
+
+      setState(() {
+        if (reset) _sets.clear();
+        final existingIds = _sets.map((s) => s.id).toSet();
+        for (final s in results) {
+          if (!existingIds.contains(s.id)) {
+            _sets.add(s);
+            existingIds.add(s.id);
           }
-          _isLoading = false;
-        });
+        }
+        final sorted = E621CollectionsApi.sortPools(
+          _sets,
+          order: f.order,
+          query: activeQuery,
+          keywordSearch: f.isBroadSearch,
+        );
+        _sets
+          ..clear()
+          ..addAll(sorted);
+        if (results.length < 20) {
+          _hasMore = false;
+        } else {
+          _page++;
+        }
+        _isLoading = false;
+      });
+
+      // Strict filters can leave the screen almost empty: keep loading a few pages.
+      final bl = Provider.of<BlacklistProvider>(context, listen: false);
+      final visibleCount = _visibleSets(bl, activeQuery).length;
+      final maxPage = f.minPosts > 0 ? 10 : 4;
+      if (visibleCount < 6 && _page <= maxPage && results.isNotEmpty && _hasMore) {
+        _fetchSets();
       }
     } catch (e) {
       debugPrint('Error fetching sets: $e');
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted && generation == _generation) setState(() => _isLoading = false);
     }
   }
 
@@ -693,6 +796,7 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
   Widget build(BuildContext context) {
     super.build(context);
     final auth = Provider.of<AuthProvider>(context);
+    final blacklist = Provider.of<BlacklistProvider>(context);
     if (_lastHost != null && _lastHost != auth.host) {
       _lastHost = auth.host;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -703,84 +807,34 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
       });
     }
 
+    final activeQuery = _searchController.text.trim();
+    final showMatches = _filters.inPosts && activeQuery.isNotEmpty;
+    final visibleSets = _visibleSets(blacklist, activeQuery);
+
     return Column(
       children: [
-        // Search bar
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12.0, 10.0, 12.0, 6.0),
-          child: Container(
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.grey[850],
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search sets by name...',
-                hintStyle: TextStyle(color: Colors.grey[500], fontSize: 13.5),
-                border: InputBorder.none,
-                prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear, size: 18, color: Colors.grey),
-                        onPressed: () {
-                          _searchController.clear();
-                          _fetchSets(reset: true);
-                        },
-                      )
-                    : null,
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              ),
-              onSubmitted: (_) => _fetchSets(reset: true),
-            ),
-          ),
-        ),
-
-        // Sort menu header
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              PopupMenuButton<String>(
-                initialValue: _order,
-                icon: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.sort, size: 18, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text(
-                      CollectionOrder.sets
-                          .firstWhere((o) => o.value == _order)
-                          .label,
-                      style: TextStyle(fontSize: 11.5, color: Colors.grey[400]),
-                    ),
-                  ],
-                ),
-                onSelected: (val) {
-                  setState(() => _order = val);
-                  _fetchSets(reset: true);
-                },
-                itemBuilder: (context) => CollectionOrder.sets
-                    .map((o) => PopupMenuItem(
-                          value: o.value,
-                          child: Text(o.label, style: const TextStyle(fontSize: 13)),
-                        ))
-                    .toList(),
-              ),
-            ],
-          ),
+        CollectionSearchHeader(
+          controller: _searchController,
+          filters: _filters,
+          isPool: false,
+          onTextChanged: _onSearchTextChanged,
+          onSearch: () => _fetchSets(reset: true),
+          onFiltersChanged: _setFilters,
         ),
 
         // Grid
         Expanded(
           child: RefreshIndicator(
             onRefresh: () => _fetchSets(reset: true),
-            child: _sets.isEmpty && _isLoading
+            child: visibleSets.isEmpty && _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _sets.isEmpty
-                    ? const Center(child: Text('No sets found.'))
+                : visibleSets.isEmpty
+                    ? _EmptyResults(
+                        noun: 'sets',
+                        hiddenCount: _sets.length,
+                        canReset: _filters.hasAdvanced,
+                        onReset: () => _setFilters(_filters.clearAdvanced()),
+                      )
                     : GridView.builder(
                         controller: _scrollController,
                         physics: const AlwaysScrollableScrollPhysics(),
@@ -791,12 +845,18 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
                           mainAxisSpacing: 12.0,
                           childAspectRatio: 0.82,
                         ),
-                        itemCount: _sets.length + (_isLoading ? 1 : 0),
+                        itemCount: visibleSets.length + (_isLoading ? 1 : 0),
                         itemBuilder: (context, index) {
-                          if (index == _sets.length) {
+                          if (index == visibleSets.length) {
                             return const Center(child: CircularProgressIndicator());
                           }
-                          return CollectionCard(collection: _sets[index]);
+                          final setItem = visibleSets[index];
+                          return CollectionCard(
+                            key: ValueKey(setItem.key),
+                            collection: setItem,
+                            keywordMatchCount:
+                                showMatches ? setItem.keywordMatchCount(activeQuery) : null,
+                          );
                         },
                       ),
           ),

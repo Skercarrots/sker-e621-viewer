@@ -12,6 +12,7 @@ class E621Collection {
   final String name;
   final String description;
   final int postCount;
+  final DateTime? createdAt;
   final DateTime? updatedAt;
 
   /// Pools only: 'series' or 'collection'.
@@ -26,8 +27,7 @@ class E621Collection {
   /// Sets only. Used to query posts via `set:<shortname>`.
   final String? shortname;
 
-  /// Pools only: post ids in reading order. Empty for sets (sets can
-  /// contain millions of ids, so we never keep them in memory).
+  /// Pools: post ids in reading order. Sets: up to the last 5 post ids for cover/fav resolution.
   final List<int> postIds;
 
   /// Post used as the cover image.
@@ -39,12 +39,16 @@ class E621Collection {
   /// Resolved posts belonging to this collection (used for blacklist checks).
   final List<E621Post> posts;
 
+  /// Number of posts matched server-side by `/posts.json` during a tag search.
+  final int serverMatchCount;
+
   const E621Collection({
     required this.type,
     required this.id,
     required this.name,
     this.description = '',
     this.postCount = 0,
+    this.createdAt,
     this.updatedAt,
     this.category,
     this.isActive = false,
@@ -54,6 +58,7 @@ class E621Collection {
     this.coverPostId,
     this.coverUrl,
     this.posts = const [],
+    this.serverMatchCount = 0,
   });
 
   bool get isPool => type == CollectionType.pool;
@@ -64,6 +69,99 @@ class E621Collection {
 
   /// Unique key across pools and sets.
   String get key => '${type.name}:$id';
+
+  /// Sum of [E621Post.favCount] across all resolved [posts] in this collection.
+  int get totalFavCount => posts.fold<int>(0, (sum, p) => sum + p.favCount);
+
+  /// Compact representation of [totalFavCount] (e.g. "1.2k", "450").
+  String get formattedTotalFavCount {
+    final total = totalFavCount;
+    if (total >= 1000000) {
+      return '${(total / 1000000).toStringAsFixed(1)}M';
+    }
+    if (total >= 10000) {
+      return '${(total / 1000).round()}k';
+    }
+    if (total >= 1000) {
+      return '${(total / 1000).toStringAsFixed(1)}k';
+    }
+    return '$total';
+  }
+
+  /// Counts how many resolved [posts] in this collection match all tokens in [query].
+  int keywordMatchCount(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return 0;
+    int count = 0;
+    for (final post in posts) {
+      if (post.matchesKeywordQuery(trimmed)) {
+        count++;
+      }
+    }
+    return math.max(count, serverMatchCount);
+  }
+
+  /// Checks whether this collection's own metadata (name, description, creator, shortname)
+  /// matches all tokens in [query].
+  bool matchesMetadataKeyword(String query) {
+    return _tokensMatch(
+      [
+        name,
+        displayName,
+        description,
+        if (creatorName != null) creatorName!,
+        if (shortname != null) shortname!,
+      ].join(' '),
+      query,
+    );
+  }
+
+  /// Checks whether this collection matches [query] in the selected scopes only:
+  /// its [name] / shortname, its [description] and/or the resolved [posts] tags.
+  /// Returns `true` when [query] is empty.
+  bool matchesScope(
+    String query, {
+    bool inName = true,
+    bool inDescription = false,
+    bool inPosts = false,
+  }) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return true;
+    if (inName && _tokensMatch([name, displayName, if (shortname != null) shortname!].join(' '), trimmed)) {
+      return true;
+    }
+    if (inDescription && _tokensMatch(description, trimmed)) return true;
+    if (inPosts && keywordMatchCount(trimmed) > 0) return true;
+    return false;
+  }
+
+  static bool _tokensMatch(String rawHaystack, String query) {
+    final trimmed = query.trim().toLowerCase();
+    if (trimmed.isEmpty) return true;
+    final tokens = trimmed.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+    if (tokens.isEmpty) return true;
+    final haystack = rawHaystack.toLowerCase();
+
+    for (final rawToken in tokens) {
+      final isNegated = (rawToken.startsWith('-') || rawToken.startsWith('~')) && rawToken.length > 1;
+      final core = isNegated ? rawToken.substring(1) : rawToken;
+      final norm = core.replaceAll(' ', '_');
+      final spaced = core.replaceAll('_', ' ');
+      final matched = haystack.contains(norm) || haystack.contains(spaced);
+      if (isNegated && matched) return false;
+      if (!isNegated && !matched) return false;
+    }
+    return true;
+  }
+
+  /// Checks whether this collection matches [query] either via its posts ([keywordMatchCount] > 0)
+  /// or via its own metadata ([matchesMetadataKeyword]).
+  bool matchesKeyword(String query) {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return true;
+    if (keywordMatchCount(trimmed) > 0) return true;
+    return matchesMetadataKeyword(trimmed);
+  }
 
   static List<int> _parseIds(dynamic raw) {
     if (raw is! List) return const [];
@@ -78,6 +176,7 @@ class E621Collection {
       name: json['name']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       postCount: (json['post_count'] as num?)?.toInt() ?? ids.length,
+      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
       updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? ''),
       category: json['category']?.toString(),
       isActive: json['is_active'] == true,
@@ -90,10 +189,13 @@ class E621Collection {
 
   factory E621Collection.fromSetJson(Map<String, dynamic> json) {
     final rawIds = json['post_ids'];
-    int? cover;
-    if (rawIds is List && rawIds.isNotEmpty && rawIds.last is num) {
-      // Most recently added post.
-      cover = (rawIds.last as num).toInt();
+    final sampleIds = <int>[];
+    if (rawIds is List && rawIds.isNotEmpty) {
+      final start = math.max(0, rawIds.length - 15);
+      for (var i = rawIds.length - 1; i >= start; i--) {
+        final v = rawIds[i];
+        if (v is num) sampleIds.add(v.toInt());
+      }
     }
     return E621Collection(
       type: CollectionType.set,
@@ -101,9 +203,11 @@ class E621Collection {
       name: json['name']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
       postCount: (json['post_count'] as num?)?.toInt() ?? 0,
+      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
       updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? ''),
       shortname: json['shortname']?.toString(),
-      coverPostId: cover,
+      postIds: sampleIds,
+      coverPostId: sampleIds.isNotEmpty ? sampleIds.first : null,
     );
   }
 
@@ -111,6 +215,7 @@ class E621Collection {
     String? name,
     String? description,
     int? postCount,
+    DateTime? createdAt,
     DateTime? updatedAt,
     String? category,
     bool? isActive,
@@ -120,6 +225,7 @@ class E621Collection {
     int? coverPostId,
     String? coverUrl,
     List<E621Post>? posts,
+    int? serverMatchCount,
   }) {
     return E621Collection(
       type: type,
@@ -127,6 +233,7 @@ class E621Collection {
       name: name ?? this.name,
       description: description ?? this.description,
       postCount: postCount ?? this.postCount,
+      createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       category: category ?? this.category,
       isActive: isActive ?? this.isActive,
@@ -136,6 +243,7 @@ class E621Collection {
       coverPostId: coverPostId ?? this.coverPostId,
       coverUrl: coverUrl ?? this.coverUrl,
       posts: posts ?? this.posts,
+      serverMatchCount: serverMatchCount ?? this.serverMatchCount,
     );
   }
 

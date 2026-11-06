@@ -8,12 +8,14 @@ import '../pages/collection_detail_page.dart';
 class CollectionCard extends StatelessWidget {
   final E621Collection collection;
   final int newCount;
+  final int? keywordMatchCount;
   final VoidCallback? onTap;
 
   const CollectionCard({
     super.key,
     required this.collection,
     this.newCount = 0,
+    this.keywordMatchCount,
     this.onTap,
   });
 
@@ -204,6 +206,39 @@ class CollectionCard extends StatelessWidget {
                       ),
                     ),
                   ),
+
+                  // Keyword match count pill (Bottom-left)
+                  if (keywordMatchCount != null && keywordMatchCount! > 0)
+                    Positioned(
+                      bottom: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.72),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Colors.cyanAccent.withValues(alpha: 0.7),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.sell, size: 10, color: Colors.cyanAccent),
+                            const SizedBox(width: 3),
+                            Text(
+                              '$keywordMatchCount ${keywordMatchCount == 1 ? "match" : "matches"}',
+                              style: const TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.cyanAccent,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -235,6 +270,26 @@ class CollectionCard extends StatelessWidget {
                           fontWeight: FontWeight.w500,
                         ),
                       ),
+                      if (collection.totalFavCount > 0) ...[
+                        Text(
+                          ' • ',
+                          style: TextStyle(color: Colors.grey[600], fontSize: 11),
+                        ),
+                        const Icon(
+                          Icons.favorite,
+                          size: 11,
+                          color: Colors.pinkAccent,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          collection.formattedTotalFavCount,
+                          style: const TextStyle(
+                            color: Colors.pinkAccent,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                       if (collection.creatorName != null &&
                           collection.creatorName!.isNotEmpty) ...[
                         Text(
