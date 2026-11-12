@@ -26,6 +26,7 @@ class E621GalleryPage extends StatefulWidget {
 
 class _E621GalleryPageState extends State<E621GalleryPage> {
   final List<E621Post> _posts = [];
+  final List<E621Post> _visiblePosts = [];
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
@@ -67,6 +68,7 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
   void _startSearch(String query) {
     setState(() {
       _posts.clear();
+      _visiblePosts.clear();
       _page = 1;
       _currentTags = query;
     });
@@ -116,17 +118,19 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
           }
         }
 
-        setState(() {
-          _posts.addAll(newPosts);
-          _page++;
-          _isLoading = false;
-        });
-
-        // If a high percentage of items was filtered by blacklist on page 1, fetch next batch
         if (mounted) {
           final bl = Provider.of<BlacklistProvider>(context, listen: false);
-          final visibleCount = bl.filterPosts(_posts).length;
-          if (visibleCount < 10 && _page <= 4 && newPosts.isNotEmpty) {
+          setState(() {
+            _posts.addAll(newPosts);
+            _visiblePosts
+              ..clear()
+              ..addAll(bl.filterPosts(_posts, isPool: false));
+            _page++;
+            _isLoading = false;
+          });
+
+          // If a high percentage of items was filtered by blacklist on page 1, fetch next batch
+          if (_visiblePosts.length < 10 && _page <= 4 && newPosts.isNotEmpty) {
             _fetchPosts();
           }
         }
@@ -148,6 +152,7 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
         if (mounted) {
           setState(() {
             _posts.clear();
+            _visiblePosts.clear();
             _page = 1;
             _isLoading = false;
           });
@@ -157,7 +162,10 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
     }
 
     final blacklist = Provider.of<BlacklistProvider>(context);
-    final visiblePosts = blacklist.filterPosts(_posts, isPool: false);
+    _visiblePosts
+      ..clear()
+      ..addAll(blacklist.filterPosts(_posts, isPool: false));
+    final visiblePosts = _visiblePosts;
 
     return Scaffold(
       appBar: AppBar(

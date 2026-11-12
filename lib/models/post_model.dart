@@ -3,6 +3,7 @@ class E621Post {
   final String? previewUrl;
   final String? fileUrl;
   final String extension;
+  final List<String> videoVariants;
   final List<String> artistTags;
   final List<String> characterTags;
   final List<String> speciesTags;
@@ -22,6 +23,7 @@ class E621Post {
     this.previewUrl,
     this.fileUrl,
     required this.extension,
+    this.videoVariants = const [],
     required this.artistTags,
     required this.characterTags,
     required this.speciesTags,
@@ -36,6 +38,65 @@ class E621Post {
     this.parentId,
     this.childrenIds = const [],
   });
+
+  bool get isVideo {
+    final ext = extension.toLowerCase();
+    return ext == 'webm' || ext == 'mp4';
+  }
+
+  /// Ordered list of candidate video URLs to try for playback.
+  /// Prefers hardware-friendly variants (e.g. MP4 / 720p / 480p samples) when
+  /// available, followed by the original [fileUrl], and deterministic CDN
+  /// sample fallbacks if the primary stream fails to decode.
+  List<String> get playableVideoUrls {
+    final seen = <String>{};
+    final result = <String>[];
+
+    void addUrl(String? raw) {
+      if (raw == null) return;
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) return;
+      final lower = trimmed.toLowerCase();
+      if (lower.endsWith('.jpg') ||
+          lower.endsWith('.jpeg') ||
+          lower.endsWith('.png') ||
+          lower.endsWith('.webp') ||
+          lower.endsWith('.gif') ||
+          lower.endsWith('.swf')) {
+        return;
+      }
+      if (seen.add(trimmed)) {
+        result.add(trimmed);
+      }
+    }
+
+    // 1. Variants are stored pre-ranked (see _collectRankedAlternates):
+    // non-AV1 streams within a ~1080p budget first, largest first.
+    for (final v in videoVariants) {
+      addUrl(v);
+    }
+    // 2. Original file URL (normally already included via alternates).
+    addUrl(fileUrl);
+
+    // 3. If the original is a static1.e621.net/data/xx/yy/<md5>.(webm|mp4) URL,
+    // add the deterministic transcoded-sample URLs e621 generates in case the
+    // API response carried no `alternates` or the raw original fails to decode.
+    if (fileUrl != null) {
+      final match = RegExp(
+        r'^(https?://[^/]+/data/)([0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{32})\.(?:webm|mp4)$',
+        caseSensitive: false,
+      ).firstMatch(fileUrl!.trim());
+      if (match != null) {
+        final base = match.group(1)!;
+        final sub = match.group(2)!;
+        addUrl('${base}sample/${sub}_720p.mp4');
+        addUrl('${base}sample/${sub}_480p.mp4');
+        addUrl('${base}sample/${sub}_alt.mp4');
+      }
+    }
+
+    return result;
+  }
 
   bool get hasPools => poolIds.isNotEmpty;
   bool get hasParent => parentId != null;
@@ -91,12 +152,114 @@ class E621Post {
     return set;
   }
 
+  static void _collectVideoUrlsFromNode(dynamic node, List<String> target) {
+    if (node == null) return;
+    if (node is String) {
+      final trimmed = node.trim();
+      final lower = trimmed.toLowerCase();
+      if (lower.endsWith('.mp4') || lower.endsWith('.webm')) {
+        if (!target.contains(trimmed)) target.add(trimmed);
+      }
+      return;
+    }
+    if (node is List) {
+      for (final item in node) {
+        _collectVideoUrlsFromNode(item, target);
+      }
+      return;
+    }
+    if (node is Map) {
+      // Extract direct url / urls first
+      if (node['url'] != null) {
+        _collectVideoUrlsFromNode(node['url'], target);
+      }
+      if (node['mp4'] != null) {
+        _collectVideoUrlsFromNode(node['mp4'], target);
+      }
+      if (node['webm'] != null) {
+        _collectVideoUrlsFromNode(node['webm'], target);
+      }
+      if (node['urls'] is List) {
+        _collectVideoUrlsFromNode(node['urls'], target);
+      }
+      // Recurse into common variant containers in priority order
+      for (final key in const ['variants', '720p', '480p', 'samples', 'original', 'alternates']) {
+        if (node[key] != null) {
+          _collectVideoUrlsFromNode(node[key], target);
+        }
+      }
+    }
+  }
+
+  /// Collects the `alternates` block of an e621 post (`original`, `variants.*`,
+  /// `samples.*`, and legacy top-level `720p` / `480p`) and appends the URLs to
+  /// [target] ordered from best to worst playback candidate.
+  ///
+  /// Ranking (earlier wins):
+  ///  1. Non-AV1 before AV1 (AV1 hardware decode is rare on phones, so it
+  ///     falls back to slow software decoding).
+  ///  2. Streams within a ~1080p pixel budget before larger ones (4K / high
+  ///     bitrate originals stall mobile decoders and cause UI lag).
+  ///  3. Larger frames first (best quality that fits the budget).
+  ///  4. The untouched original before an equally sized transcode.
+  static void _collectRankedAlternates(dynamic alternates, List<String> target) {
+    if (alternates is! Map) return;
+
+    final entries = <_VideoCandidate>[];
+
+    void addEntry(dynamic node) {
+      if (node is! Map) return;
+      final url = node['url'];
+      if (url is! String) return;
+      final trimmed = url.trim();
+      final lower = trimmed.toLowerCase();
+      if (!lower.endsWith('.mp4') && !lower.endsWith('.webm')) return;
+      if (entries.any((e) => e.url == trimmed)) return;
+      entries.add(_VideoCandidate(
+        url: trimmed,
+        width: node['width'] is num ? (node['width'] as num).toInt() : null,
+        height: node['height'] is num ? (node['height'] as num).toInt() : null,
+        codec: node['codec']?.toString().toLowerCase(),
+        index: entries.length,
+      ));
+    }
+
+    void addGroup(dynamic group) {
+      if (group is! Map) return;
+      if (group['url'] is String) {
+        addEntry(group);
+        return;
+      }
+      for (final value in group.values) {
+        addEntry(value);
+      }
+    }
+
+    addEntry(alternates['original']);
+    addGroup(alternates['variants']);
+    addGroup(alternates['samples']);
+    addEntry(alternates['720p']);
+    addEntry(alternates['480p']);
+
+    entries.sort();
+    for (final e in entries) {
+      if (!target.contains(e.url)) target.add(e.url);
+    }
+  }
+
+  static bool _isVideoOrFlashUrl(String? url) {
+    if (url == null) return false;
+    final lower = url.trim().toLowerCase();
+    return lower.endsWith('.webm') || lower.endsWith('.mp4') || lower.endsWith('.swf');
+  }
+
   factory E621Post.fromJson(Map<String, dynamic> json) {
     // 1. Files & URLs (Support both v2 'files' object and legacy v1 'file', 'sample', 'preview')
     String? fileUrl;
     String? previewUrl;
     String ext = '';
     String? md5;
+    final List<String> videoVariants = [];
 
     final bool isDeleted = (json['flags'] is Map && json['flags']['deleted'] == true) ||
         (json['files'] is Map &&
@@ -131,6 +294,12 @@ class E621Post {
           sample?['webp'] as String? ??
           preview?['jpg'] as String? ??
           preview?['webp'] as String?;
+
+      _collectRankedAlternates(files['alternates'], videoVariants);
+      _collectRankedAlternates(sample?['alternates'], videoVariants);
+      _collectVideoUrlsFromNode(files['variants'], videoVariants);
+      _collectVideoUrlsFromNode(files['alternates'], videoVariants);
+      _collectVideoUrlsFromNode(sample, videoVariants);
     }
 
     // Fallback to legacy v1 structure if fields were not extracted from v2 'files'
@@ -142,8 +311,28 @@ class E621Post {
       md5 ??= json['file']['md5']?.toString();
     }
 
-    previewUrl ??= (json['sample'] is Map ? json['sample']['url'] as String? : null) ??
-        (json['preview'] is Map ? json['preview']['url'] as String? : null);
+    if (json['sample'] is Map) {
+      final sampleMap = json['sample'] as Map;
+      _collectRankedAlternates(sampleMap['alternates'], videoVariants);
+      _collectVideoUrlsFromNode(sampleMap['alternates'], videoVariants);
+      final sampleUrl = sampleMap['url'] as String?;
+      if (_isVideoOrFlashUrl(sampleUrl)) {
+        _collectVideoUrlsFromNode(sampleUrl, videoVariants);
+      } else {
+        previewUrl ??= sampleUrl;
+      }
+    }
+    if (json['alternates'] != null) {
+      _collectRankedAlternates(json['alternates'], videoVariants);
+      _collectVideoUrlsFromNode(json['alternates'], videoVariants);
+    }
+
+    final rawPreviewUrl = json['preview'] is Map ? json['preview']['url'] as String? : null;
+    if (previewUrl == null || _isVideoOrFlashUrl(previewUrl)) {
+      previewUrl = !_isVideoOrFlashUrl(rawPreviewUrl) ? rawPreviewUrl : null;
+    }
+
+    ext = ext.trim().toLowerCase();
 
     // Reconstruct CDN URLs from md5 + ext when e621's server-side global filter
     // sets url fields to null on non-deleted posts.
@@ -161,8 +350,25 @@ class E621Post {
           previewUrl = 'https://static1.e621.net/data/preview/$sub.jpg';
         }
       }
+      if (videoVariants.isEmpty && (ext == 'webm' || ext == 'mp4')) {
+        final alternates = json['sample'] is Map ? json['sample']['alternates'] : null;
+        if (alternates is Map) {
+          // Real e621 names: <md5>_720p.mp4, <md5>_480p.mp4 and <md5>_alt.mp4
+          // (full-size H.264). Listed in hardware-friendliness order.
+          final samples = alternates['samples'];
+          if ((samples is Map && samples['720p'] is Map) || alternates['720p'] is Map) {
+            videoVariants.add('https://static1.e621.net/data/sample/_720p.mp4');
+          }
+          if ((samples is Map && samples['480p'] is Map) || alternates['480p'] is Map) {
+            videoVariants.add('https://static1.e621.net/data/sample/_480p.mp4');
+          }
+          final variants = alternates['variants'];
+          if (variants is Map && variants['mp4'] is Map) {
+            videoVariants.add('https://static1.e621.net/data/sample/_alt.mp4');
+          }
+        }
+      }
     }
-
     // Fallback previewUrl to fileUrl for static images
     if (previewUrl == null &&
         fileUrl != null &&
@@ -179,7 +385,7 @@ class E621Post {
         final filename = uri.pathSegments.last;
         final dotIndex = filename.lastIndexOf('.');
         if (dotIndex != -1 && dotIndex < filename.length - 1) {
-          ext = filename.substring(dotIndex + 1);
+          ext = filename.substring(dotIndex + 1).toLowerCase();
         }
       }
     }
@@ -257,6 +463,7 @@ class E621Post {
       previewUrl: previewUrl,
       fileUrl: fileUrl,
       extension: ext,
+      videoVariants: videoVariants,
       artistTags: artistTags,
       characterTags: characterTags,
       speciesTags: speciesTags,
@@ -334,6 +541,7 @@ class E621Post {
       'previewUrl': previewUrl,
       'fileUrl': fileUrl,
       'extension': extension,
+      'videoVariants': videoVariants,
       'artistTags': artistTags,
       'characterTags': characterTags,
       'speciesTags': speciesTags,
@@ -356,6 +564,7 @@ class E621Post {
       previewUrl: json['previewUrl'] as String?,
       fileUrl: json['fileUrl'] as String?,
       extension: json['extension']?.toString() ?? '',
+      videoVariants: List<String>.from(json['videoVariants'] ?? const []),
       artistTags: List<String>.from(json['artistTags'] ?? []),
       characterTags: List<String>.from(json['characterTags'] ?? []),
       speciesTags: List<String>.from(json['speciesTags'] ?? []),
@@ -370,5 +579,41 @@ class E621Post {
       parentId: _parsePositiveInt(json['parentId'] ?? json['parent_id']),
       childrenIds: _parsePositiveIntList(json['childrenIds'] ?? json['children']),
     );
+  }
+}
+
+/// A playable video source from an e621 `alternates` block, orderable by how
+/// suitable it is for smooth playback on mobile devices.
+class _VideoCandidate implements Comparable<_VideoCandidate> {
+  /// Roughly 1080p (1920x1088 after macroblock padding). Anything above this
+  /// (e.g. 4K originals) tends to stall phone decoders.
+  static const int _pixelBudget = 1920 * 1088;
+
+  final String url;
+  final int? width;
+  final int? height;
+  final String? codec;
+  final int index;
+
+  const _VideoCandidate({
+    required this.url,
+    required this.width,
+    required this.height,
+    required this.codec,
+    required this.index,
+  });
+
+  bool get _isAv1 => codec != null && (codec!.startsWith('av01') || codec!.contains('av1'));
+
+  int get _pixels => (width ?? 0) * (height ?? 0);
+
+  bool get _overBudget => _pixels > _pixelBudget;
+
+  @override
+  int compareTo(_VideoCandidate other) {
+    if (_isAv1 != other._isAv1) return _isAv1 ? 1 : -1;
+    if (_overBudget != other._overBudget) return _overBudget ? 1 : -1;
+    if (_pixels != other._pixels) return other._pixels.compareTo(_pixels);
+    return index.compareTo(other.index);
   }
 }
