@@ -6,24 +6,33 @@ import '../models/post_model.dart';
 import '../providers/auth_provider.dart';
 
 // Top-level so they can run in a background isolate via `compute`.
-// Set responses may contain millions of post ids, so decoding them on the
+// Set responses may contain thousands of post ids, so decoding them on the
 // UI thread would freeze the app.
 List<E621Collection> _parsePools(String body) {
-  final data = jsonDecode(body);
-  if (data is! List) return const [];
-  return data.whereType<Map<String, dynamic>>().map(E621Collection.fromPoolJson).toList();
+  try {
+    final data = jsonDecode(body);
+    if (data is! List) return const [];
+    return data.whereType<Map<String, dynamic>>().map(E621Collection.fromPoolJson).toList();
+  } on FormatException {
+    return const [];
+  }
 }
 
 List<E621Collection> _parseSets(String body) {
-  final data = jsonDecode(body);
-  if (data is! List) return const [];
-  return data.whereType<Map<String, dynamic>>().map(E621Collection.fromSetJson).toList();
+  try {
+    final data = jsonDecode(body);
+    if (data is! List) return const [];
+    return data.whereType<Map<String, dynamic>>().map(E621Collection.fromSetJson).toList();
+  } on FormatException {
+    return const [];
+  }
 }
 
 /// Thin client for e621 / e926 pools / post sets endpoints.
 class E621CollectionsApi {
   static const _maxIdsPerQuery = 100;
   static const _maxPoolPostsToInspect = 5;
+  static final http.Client _sharedClient = http.Client();
   static final Map<String, E621Post> _postCache = {};
   static final Map<String, E621Collection> _poolCache = {};
 
@@ -32,11 +41,23 @@ class E621CollectionsApi {
   final String _host;
   final bool _useCache;
 
+  /// Whether the most recent [searchPools] or [searchSets] call received a full
+  /// page of raw items from the server before client-side filtering.
+  bool lastSearchHadMore = false;
+
+  /// Whether the most recent [getSetPosts] call received a full page of raw
+  /// posts from the server before safe-mode / preview filtering.
+  bool lastSetPostsHadMore = false;
+
+  /// Number of posts filtered out by the host / preview check in the most
+  /// recent [getSetPosts] call.
+  int lastSetPostsHostHiddenCount = 0;
+
   E621CollectionsApi(
     this.headers, {
     http.Client? client,
     String? host,
-  })  : _client = client ?? http.Client(),
+  })  : _client = client ?? _sharedClient,
         _host = host ?? AuthProvider.currentHost,
         _useCache = client == null;
 
@@ -121,17 +142,19 @@ class E621CollectionsApi {
       case 'updated_at':
         cmp = (x, y) {
           final a = x.value.updatedAt, b = y.value.updatedAt;
-          if (a == null || b == null) return 0;
+          if (a == null && b == null) return 0;
+          if (a == null) return 1;
+          if (b == null) return -1;
           return b.compareTo(a);
         };
       case 'created_at':
         cmp = (x, y) {
           final a = x.value.createdAt, b = y.value.createdAt;
-          if (a != null && b != null) {
-            final c = b.compareTo(a);
-            if (c != 0) return c;
-          }
-          return y.value.id.compareTo(x.value.id);
+          if (a == null && b == null) return y.value.id.compareTo(x.value.id);
+          if (a == null) return 1;
+          if (b == null) return -1;
+          final c = b.compareTo(a);
+          return c != 0 ? c : y.value.id.compareTo(x.value.id);
         };
       case 'post_count':
         cmp = (x, y) => y.value.postCount.compareTo(x.value.postCount);
@@ -168,6 +191,7 @@ class E621CollectionsApi {
     int page = 1,
     int limit = 20,
   }) async {
+    lastSearchHadMore = false;
     final trimmed = query.trim();
     final apiOrder = _resolveApiPoolOrder(order);
     final broad = keywordSearch || order == 'keyword_posts';
@@ -192,13 +216,17 @@ class E621CollectionsApi {
         ...filterParams(),
       });
       if (body == null) return const [];
-      final attached = await attachCovers(await compute(_parsePools, body));
+      final parsed = await compute(_parsePools, body);
+      lastSearchHadMore = parsed.length >= limit;
+      final attached = await attachCovers(parsed);
       return sortPools(attached, order: order, query: trimmed);
     }
 
     // Broad search: pool names, pool descriptions, and posts inside pools.
     final poolById = <int, E621Collection>{};
+    final serverMatchedIds = <int>{};
     final matchedPostsByPool = <int, List<E621Post>>{};
+    var rawFullPage = false;
 
     // 1. Pool name match (or base pool list when query is empty)
     if (wantName || trimmed.isEmpty) {
@@ -207,8 +235,11 @@ class E621CollectionsApi {
         ...filterParams(),
       });
       if (nameBody != null) {
-        for (final p in await compute(_parsePools, nameBody)) {
+        final parsed = await compute(_parsePools, nameBody);
+        if (parsed.length >= limit) rawFullPage = true;
+        for (final p in parsed) {
           poolById[p.id] = p;
+          serverMatchedIds.add(p.id);
         }
       }
     }
@@ -220,8 +251,11 @@ class E621CollectionsApi {
         ...filterParams(),
       });
       if (descBody != null) {
-        for (final p in await compute(_parsePools, descBody)) {
+        final parsed = await compute(_parsePools, descBody);
+        if (parsed.length >= limit) rawFullPage = true;
+        for (final p in parsed) {
           poolById.putIfAbsent(p.id, () => p);
+          serverMatchedIds.add(p.id);
         }
       }
     }
@@ -240,6 +274,7 @@ class E621CollectionsApi {
       });
       if (postsBody != null) {
         final matchedPosts = _parsePosts(postsBody, requirePreview: false);
+        if (matchedPosts.length >= 60) rawFullPage = true;
         final missingPoolIds = <int>[];
         for (final post in matchedPosts) {
           for (final poolId in post.poolIds) {
@@ -265,6 +300,7 @@ class E621CollectionsApi {
       }
     }
 
+    lastSearchHadMore = rawFullPage;
     if (poolById.isEmpty) return const [];
 
     final attached = await attachCovers(poolById.values.toList());
@@ -285,6 +321,7 @@ class E621CollectionsApi {
       );
     }).where((pool) {
       if (trimmed.isEmpty) return true;
+      if (serverMatchedIds.contains(pool.id)) return true;
       return pool.matchesScope(
         trimmed,
         inName: wantName,
@@ -296,13 +333,16 @@ class E621CollectionsApi {
     return sortPools(merged, order: order, query: trimmed, keywordSearch: true);
   }
 
-  Future<List<E621Collection>> getPoolsByIds(List<int> ids) async {
+  Future<List<E621Collection>> getPoolsByIds(
+    List<int> ids, {
+    bool bypassCache = false,
+  }) async {
     if (ids.isEmpty) return const [];
     final byId = <int, E621Collection>{};
     final missing = <int>[];
 
     for (final id in ids.toSet()) {
-      final cached = _useCache ? _poolCache['$_host:$id'] : null;
+      final cached = (_useCache && !bypassCache) ? _poolCache['$_host:$id'] : null;
       if (cached != null) {
         byId[id] = cached;
       } else {
@@ -352,14 +392,17 @@ class E621CollectionsApi {
     int page = 1,
     int limit = 20,
   }) async {
+    lastSearchHadMore = false;
     final trimmed = query.trim();
     final broad = keywordSearch || order == 'keyword_posts';
     final wantName = inName ?? true;
     final wantDesc = inDescription ?? broad;
     final wantPosts = inPosts ?? broad;
-    final apiOrder = order == 'fav_count' ? 'post_count' : _resolveApiPoolOrder(order);
+    final apiOrder = _resolveApiPoolOrder(order);
     final setById = <int, E621Collection>{};
+    final serverMatchedIds = <int>{};
     final creator = creatorName?.trim();
+    var rawFullPage = false;
 
     final positiveTokens = trimmed
         .split(RegExp(r'\s+'))
@@ -369,46 +412,85 @@ class E621CollectionsApi {
             !t.startsWith('~') &&
             !t.contains(':'))
         .toList();
-    final nameQuery = (wantPosts && positiveTokens.isNotEmpty)
+    final nameQuery = ((wantPosts || wantDesc) && positiveTokens.isNotEmpty)
         ? positiveTokens.join(' ')
         : trimmed;
 
-    // 1. Set name match (or default listing when query is empty)
+    Map<String, String> baseSetParams() => {
+          if (creator != null && creator.isNotEmpty) 'search[creator_name]': creator,
+          'search[order]': apiOrder,
+          'page': '$page',
+          'limit': '$limit',
+        };
+
+    // 1. Set name & shortname match (or default listing when query is empty)
     if (wantName || trimmed.isEmpty || (wantPosts && positiveTokens.isNotEmpty)) {
       final body = await _get('/post_sets.json', {
         if (nameQuery.isNotEmpty) 'search[name]': _textWildcard(nameQuery),
-        if (creator != null && creator.isNotEmpty) 'search[creator_name]': creator,
-        'search[order]': apiOrder,
-        'page': '$page',
-        'limit': '$limit',
+        ...baseSetParams(),
       });
+      var nameMatchCount = 0;
       if (body != null) {
-        for (final s in await compute(_parseSets, body)) {
+        final parsed = await compute(_parseSets, body);
+        nameMatchCount = parsed.length;
+        if (parsed.length >= limit) rawFullPage = true;
+        for (final s in parsed) {
           setById[s.id] = s;
+          if (wantName || trimmed.isEmpty) serverMatchedIds.add(s.id);
+        }
+      }
+
+      // Also match set shortname when name search did not already fill the page
+      if (wantName && nameQuery.isNotEmpty && nameMatchCount < limit) {
+        final shortBody = await _get('/post_sets.json', {
+          'search[shortname]': _wildcard(nameQuery),
+          ...baseSetParams(),
+        });
+        if (shortBody != null) {
+          final parsedShort = await compute(_parseSets, shortBody);
+          if (parsedShort.length >= limit) rawFullPage = true;
+          for (final s in parsedShort) {
+            setById.putIfAbsent(s.id, () => s);
+            serverMatchedIds.add(s.id);
+          }
         }
       }
     }
 
-    // 2. Broader candidate sets when searching descriptions or post tags
-    if ((wantDesc || wantPosts) && trimmed.isNotEmpty) {
-      final extraBody = await _get('/post_sets.json', {
-        if (wantDesc && !wantPosts) 'search[description]': _textWildcard(trimmed),
-        if (creator != null && creator.isNotEmpty) 'search[creator_name]': creator,
-        'search[order]': apiOrder,
-        'page': '$page',
-        'limit': '$limit',
+    // 2. Set description match
+    if (wantDesc && trimmed.isNotEmpty) {
+      final descQuery = nameQuery.isNotEmpty ? nameQuery : trimmed;
+      final descBody = await _get('/post_sets.json', {
+        'search[description]': _textWildcard(descQuery),
+        ...baseSetParams(),
       });
+      if (descBody != null) {
+        final parsedDesc = await compute(_parseSets, descBody);
+        if (parsedDesc.length >= limit) rawFullPage = true;
+        for (final s in parsedDesc) {
+          setById.putIfAbsent(s.id, () => s);
+          serverMatchedIds.add(s.id);
+        }
+      }
+    }
+
+    // 3. Broader candidate sets when searching post tags
+    if (wantPosts && trimmed.isNotEmpty) {
+      final extraBody = await _get('/post_sets.json', baseSetParams());
       if (extraBody != null) {
-        for (final s in await compute(_parseSets, extraBody)) {
+        final parsedExtra = await compute(_parseSets, extraBody);
+        if (parsedExtra.length >= limit) rawFullPage = true;
+        for (final s in parsedExtra) {
           setById.putIfAbsent(s.id, () => s);
         }
       }
     }
 
+    lastSearchHadMore = rawFullPage;
     if (setById.isEmpty) return const [];
     final attached = await attachCovers(setById.values.toList());
 
-    // 3. Server-side post tag evaluation for candidate sets' posts
+    // 4. Server-side post tag evaluation across all candidate sets' posts
     final matchedPostsBySet = <int, List<E621Post>>{};
     if (wantPosts && trimmed.isNotEmpty) {
       final postToSetIds = <int, List<int>>{};
@@ -417,14 +499,14 @@ class E621CollectionsApi {
           postToSetIds.putIfAbsent(postId, () => []).add(s.id);
         }
       }
-      final candidatePostIds = postToSetIds.keys.take(_maxIdsPerQuery).toList();
-      if (candidatePostIds.isNotEmpty) {
+      final allCandidatePostIds = postToSetIds.keys.toList();
+      for (final chunk in _chunks(allCandidatePostIds)) {
         final postTagsQuery = order == 'fav_count'
-            ? 'id:${candidatePostIds.join(",")} $trimmed order:favcount'
-            : 'id:${candidatePostIds.join(",")} $trimmed';
+            ? 'id:${chunk.join(",")} $trimmed order:favcount'
+            : 'id:${chunk.join(",")} $trimmed';
         final postsBody = await _get('/posts.json', {
           'tags': postTagsQuery,
-          'limit': '${candidatePostIds.length}',
+          'limit': '${chunk.length}',
         });
         if (postsBody != null) {
           for (final post in _parsePosts(postsBody, requirePreview: false)) {
@@ -455,6 +537,7 @@ class E621CollectionsApi {
     }).where((s) {
       if (trimmed.isEmpty) return true;
       if (!wantDesc && !wantPosts && wantName) return true;
+      if (serverMatchedIds.contains(s.id)) return true;
       return s.matchesScope(
         trimmed,
         inName: wantName,
@@ -540,12 +623,33 @@ class E621CollectionsApi {
 
   /// Posts of a set, newest first.
   Future<List<E621Post>> getSetPosts(String shortname, {int page = 1, int limit = 60}) async {
+    lastSetPostsHadMore = false;
+    lastSetPostsHostHiddenCount = 0;
     final body = await _get('/posts.json', {
       'tags': 'set:$shortname',
       'page': '$page',
       'limit': '$limit',
     });
-    return body == null ? const [] : _parsePosts(body);
+    if (body == null) return const [];
+    final dynamic data;
+    try {
+      data = jsonDecode(body);
+    } on FormatException {
+      return const [];
+    }
+    final List<dynamic> list = (data is List)
+        ? data
+        : (data is Map && data['posts'] is List ? data['posts'] as List<dynamic> : const []);
+    final rawMaps = list.whereType<Map<String, dynamic>>().toList();
+    lastSetPostsHadMore = rawMaps.length >= limit;
+    final isSafeMode = _host == 'e926.net';
+    final parsed = rawMaps
+        .map(E621Post.fromJson)
+        .where((p) =>
+            p.previewUrl != null && (!isSafeMode || p.rating.toLowerCase() == 's'))
+        .toList();
+    lastSetPostsHostHiddenCount = rawMaps.length - parsed.length;
+    return parsed;
   }
 
   /// Resolves cover images and collection posts for a page of collections with
@@ -620,7 +724,12 @@ class E621CollectionsApi {
   // -------------------------------------------------------------- Helpers
 
   List<E621Post> _parsePosts(String body, {bool requirePreview = true}) {
-    final dynamic data = jsonDecode(body);
+    final dynamic data;
+    try {
+      data = jsonDecode(body);
+    } on FormatException {
+      return const [];
+    }
     final List<dynamic> list = (data is List)
         ? data
         : (data is Map && data['posts'] is List ? data['posts'] as List<dynamic> : const []);

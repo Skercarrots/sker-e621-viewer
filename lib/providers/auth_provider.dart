@@ -15,6 +15,7 @@ class AuthProvider with ChangeNotifier {
 
   final FlutterSecureStorage _storage;
   final http.Client _client;
+  final bool _ownsClient;
   E621User? _user;
   String? _username;
   String? _apiKey;
@@ -25,13 +26,23 @@ class AuthProvider with ChangeNotifier {
 
   AuthProvider({FlutterSecureStorage? storage, http.Client? client})
       : _storage = storage ?? const FlutterSecureStorage(),
-        _client = client ?? http.Client() {
+        _client = client ?? http.Client(),
+        _ownsClient = client == null {
     currentHost = _host;
   }
 
-  // --- NEW: Responsiveness Cache & Triggers ---
+  http.Client get httpClient => _client;
+
+  @override
+  void dispose() {
+    if (_ownsClient) {
+      _client.close();
+    }
+    super.dispose();
+  }
+
   int _favoritesUpdateTrigger = 0;
-  final Set<int> _knownFavoriteIds = {}; 
+  final Set<int> _knownFavoriteIds = {};
 
   E621User? get user => _user;
   String? get username => _username;
@@ -86,11 +97,16 @@ class AuthProvider with ChangeNotifier {
       final String basicAuth = 'Basic ${base64Encode(utf8.encode('$_username:$_apiKey'))}';
       return {
         'Authorization': basicAuth,
-        'User-Agent': 'SkerE621/1.0 (by $_username on e621)', 
+        'User-Agent': 'SkerE621/1.0 (by $_username on e621)',
       };
     }
     return {'User-Agent': 'SkerE621/1.0 (by anonymous on e621)'};
   }
+
+  /// Headers safe to send to CDN / media hosts without exposing API credentials.
+  Map<String, String> get mediaHeaders => {
+        'User-Agent': authHeaders['User-Agent']!,
+      };
 
   Future<void> tryAutoLogin({bool refreshInBackground = true}) async {
     _isLoading = true;
@@ -163,18 +179,23 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> _refreshUserDataInBackground(String username) async {
     try {
-      final uri = Uri.https(_host, '/users/$username.json');
+      final uri = Uri.https(_host, '/users/${Uri.encodeComponent(username)}.json');
       final response = await _client.get(uri, headers: authHeaders);
+      if (_username != username) return;
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+        final previousAvatarId = _user?.avatarId;
         final previousAvatarUrl = _user?.resolvedAvatarUrl;
-        _user = E621User.fromJson(data);
-        _user?.resolvedAvatarUrl ??= previousAvatarUrl;
+        final refreshed = E621User.fromJson(data);
+        if (refreshed.avatarId == previousAvatarId && previousAvatarUrl != null) {
+          refreshed.resolvedAvatarUrl ??= previousAvatarUrl;
+        }
+        _user = refreshed;
 
         await resolveUserAvatar();
 
-        if (_user != null) {
+        if (_user != null && _username == username) {
           await _storage.write(key: 'user_profile', value: jsonEncode(_user!.toJson()));
         }
         notifyListeners();
@@ -192,7 +213,7 @@ class AuthProvider with ChangeNotifier {
   Future<bool> login(String username, String key) async {
     _isLoading = true;
     _isGuestMode = false;
-    _knownFavoriteIds.clear(); // Clear cache on new login
+    _knownFavoriteIds.clear();
     await _storage.delete(key: 'is_guest_mode');
     notifyListeners();
 
@@ -200,7 +221,7 @@ class AuthProvider with ChangeNotifier {
       _username = username;
       _apiKey = key;
 
-      final uri = Uri.https(_host, '/users/$username.json');
+      final uri = Uri.https(_host, '/users/${Uri.encodeComponent(username)}.json');
       final response = await _client.get(uri, headers: authHeaders);
 
       if (response.statusCode == 200) {
@@ -209,8 +230,7 @@ class AuthProvider with ChangeNotifier {
 
         await _storage.write(key: 'username', value: username);
         await _storage.write(key: 'apiKey', value: key);
-        
-        // If user has an avatar_id, resolve its real thumbnail URL
+
         await resolveUserAvatar();
 
         if (_user != null) {
@@ -250,17 +270,19 @@ class AuthProvider with ChangeNotifier {
     _username = null;
     _apiKey = null;
     _isGuestMode = false;
-    _knownFavoriteIds.clear(); // Clear cache on logout
+    _knownFavoriteIds.clear();
     notifyListeners();
     _notifyFavoritesChanged();
   }
 
   Future<void> resolveUserAvatar() async {
-    if (_user == null || _user!.avatarId == null || _user!.avatarId! <= 0) return;
-    if (_user!.resolvedAvatarUrl != null) return;
+    final targetUser = _user;
+    if (targetUser == null || targetUser.avatarId == null || targetUser.avatarId! <= 0) return;
+    if (targetUser.resolvedAvatarUrl != null) return;
     try {
-      final postUri = Uri.https(_host, '/posts/${_user!.avatarId}.json', {'v2': 'true'});
+      final postUri = Uri.https(_host, '/posts/${targetUser.avatarId}.json', {'v2': 'true'});
       final postRes = await _client.get(postUri, headers: authHeaders);
+      if (!identical(_user, targetUser)) return;
       if (postRes.statusCode == 200) {
         final dynamic postData = json.decode(postRes.body);
         final Map<String, dynamic>? postMap = (postData is Map<String, dynamic>)
@@ -270,10 +292,8 @@ class AuthProvider with ChangeNotifier {
             : null;
         if (postMap != null) {
           final post = E621Post.fromJson(postMap);
-          _user!.resolvedAvatarUrl = post.previewUrl;
-          if (_user != null) {
-            await _storage.write(key: 'user_profile', value: jsonEncode(_user!.toJson()));
-          }
+          targetUser.resolvedAvatarUrl = post.previewUrl;
+          await _storage.write(key: 'user_profile', value: jsonEncode(targetUser.toJson()));
           notifyListeners();
         }
       }
@@ -306,7 +326,7 @@ class AuthProvider with ChangeNotifier {
     } else {
       await _storage.delete(key: 'is_guest_mode');
     }
-    _knownFavoriteIds.clear(); // Clear when toggling guest
+    _knownFavoriteIds.clear();
     notifyListeners();
   }
 
@@ -316,7 +336,6 @@ class AuthProvider with ChangeNotifier {
     try {
       final List<dynamic> decoded = jsonDecode(data);
       final favs = decoded.map((e) => E621Post.fromLocalJson(e)).toList();
-      // Auto-cache known favorites for instant UI loading later
       registerFavorites(favs.map((e) => e.id).toList());
       return favs;
     } catch (e) {
@@ -324,7 +343,6 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  // Updated to use current state for Optimistic UI
   Future<bool> toggleGuestFavorite(E621Post post, bool isCurrentlyFav) async {
     List<E621Post> favs = await getGuestFavorites();
     
@@ -343,18 +361,15 @@ class AuthProvider with ChangeNotifier {
     return true;
   }
 
-  // --- API FAVORITE METHODS (For logged-in users) ---
-  // Updated to use current state to avoid doing two API calls
   Future<bool> toggleApiFavorite(int postId, bool isCurrentlyFav) async {
     if (!isLoggedIn) return false;
     try {
       if (!isCurrentlyFav) {
-        // We want to ADD it
         final uri = Uri.https(_host, '/favorites.json');
-        final response = await http.post(
+        final response = await _client.post(
           uri,
           headers: authHeaders,
-          body: {'post_id': postId.toString()}
+          body: {'post_id': postId.toString()},
         );
         if (response.statusCode == 201 || response.statusCode == 200 || response.statusCode == 422) {
           _knownFavoriteIds.add(postId);
@@ -362,9 +377,8 @@ class AuthProvider with ChangeNotifier {
           return true;
         }
       } else {
-        // We want to REMOVE it
         final uriDelete = Uri.https(_host, '/favorites/$postId.json');
-        final delResponse = await http.delete(uriDelete, headers: authHeaders);
+        final delResponse = await _client.delete(uriDelete, headers: authHeaders);
         if (delResponse.statusCode == 200 || delResponse.statusCode == 204) {
           _knownFavoriteIds.remove(postId);
           _notifyFavoritesChanged();

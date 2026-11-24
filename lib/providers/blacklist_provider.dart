@@ -5,43 +5,78 @@ import '../models/collection_model.dart';
 import '../models/post_model.dart';
 
 /// Represents a single parsed blacklist rule (one line).
-/// Multiple tags in the same line are treated as a logical AND (all must match).
+/// Multiple tags in the same line are treated as a logical AND (all must match),
+/// while `~` tokens on a line act as a logical OR group (at least one must match).
 class BlacklistRule {
   final String originalLine;
   final List<String> tokens;
+  final List<_ParsedBlacklistToken> _requiredTokens;
+  final List<_ParsedBlacklistToken> _orTokens;
 
   BlacklistRule({
     required this.originalLine,
     required this.tokens,
-  });
+  })  : _requiredTokens = [],
+        _orTokens = [] {
+    for (final raw in tokens) {
+      final lower = raw.toLowerCase();
+      if (lower.startsWith('~') && lower.length > 1) {
+        _orTokens.add(_ParsedBlacklistToken.parse(lower.substring(1), isNegated: false));
+      } else if (lower.startsWith('-') && lower.length > 1) {
+        _requiredTokens.add(_ParsedBlacklistToken.parse(lower.substring(1), isNegated: true));
+      } else {
+        _requiredTokens.add(_ParsedBlacklistToken.parse(lower, isNegated: false));
+      }
+    }
+  }
 
   /// Evaluates whether this rule matches the given [post] and its [postTags].
   bool matches(E621Post post, Set<String> postTags) {
-    if (tokens.isEmpty) return false;
-    for (final token in tokens) {
-      if (!_matchesToken(token, post, postTags)) {
+    if (_requiredTokens.isEmpty && _orTokens.isEmpty) return false;
+
+    for (final token in _requiredTokens) {
+      final matched = token.matchesPositive(post, postTags);
+      if (token.isNegated ? matched : !matched) {
         return false;
       }
     }
-    return true;
-  }
 
-  bool _matchesToken(String token, E621Post post, Set<String> postTags) {
-    final lower = token.toLowerCase();
-
-    // Negation prefix: '-' or '~'
-    if ((lower.startsWith('-') || lower.startsWith('~')) && lower.length > 1) {
-      final subToken = lower.substring(1);
-      return !_matchesPositiveToken(subToken, post, postTags);
+    if (_orTokens.isNotEmpty &&
+        !_orTokens.any((token) => token.matchesPositive(post, postTags))) {
+      return false;
     }
 
-    return _matchesPositiveToken(lower, post, postTags);
+    return true;
+  }
+}
+
+class _ParsedBlacklistToken {
+  final String core;
+  final bool isNegated;
+  final RegExp? wildcardRegex;
+
+  const _ParsedBlacklistToken({
+    required this.core,
+    required this.isNegated,
+    this.wildcardRegex,
+  });
+
+  factory _ParsedBlacklistToken.parse(String core, {required bool isNegated}) {
+    RegExp? regex;
+    if (!core.startsWith('rating:') && !core.startsWith('score:') && core.contains('*')) {
+      final escaped = RegExp.escape(core).replaceAll(r'\*', '.*');
+      regex = RegExp('^$escaped\$');
+    }
+    return _ParsedBlacklistToken(
+      core: core,
+      isNegated: isNegated,
+      wildcardRegex: regex,
+    );
   }
 
-  bool _matchesPositiveToken(String lower, E621Post post, Set<String> postTags) {
-    // Rating matching (e.g. rating:s, rating:safe, rating:e, rating:explicit)
-    if (lower.startsWith('rating:')) {
-      final r = lower.substring(7).trim();
+  bool matchesPositive(E621Post post, Set<String> postTags) {
+    if (core.startsWith('rating:')) {
+      final r = core.substring(7).trim();
       final postRating = post.rating.toLowerCase();
       if (r == 's' || r == 'safe') return postRating == 's' || postRating == 'safe';
       if (r == 'q' || r == 'questionable') return postRating == 'q' || postRating == 'questionable';
@@ -49,30 +84,31 @@ class BlacklistRule {
       return postRating == r;
     }
 
-    // Score comparison (e.g. score:<10, score:>50)
-    if (lower.startsWith('score:')) {
-      final valStr = lower.substring(6).trim();
-      if (valStr.startsWith('<')) {
-        final threshold = int.tryParse(valStr.substring(1)) ?? 0;
-        return post.score < threshold;
+    if (core.startsWith('score:')) {
+      final valStr = core.substring(6).trim();
+      if (valStr.startsWith('<=')) {
+        final threshold = int.tryParse(valStr.substring(2));
+        return threshold != null && post.score <= threshold;
+      } else if (valStr.startsWith('>=')) {
+        final threshold = int.tryParse(valStr.substring(2));
+        return threshold != null && post.score >= threshold;
+      } else if (valStr.startsWith('<')) {
+        final threshold = int.tryParse(valStr.substring(1));
+        return threshold != null && post.score < threshold;
       } else if (valStr.startsWith('>')) {
-        final threshold = int.tryParse(valStr.substring(1)) ?? 0;
-        return post.score > threshold;
+        final threshold = int.tryParse(valStr.substring(1));
+        return threshold != null && post.score > threshold;
       } else {
-        final exact = int.tryParse(valStr) ?? 0;
-        return post.score == exact;
+        final exact = int.tryParse(valStr);
+        return exact != null && post.score == exact;
       }
     }
 
-    // Wildcard matching (e.g. *gore* or blood*)
-    if (lower.contains('*')) {
-      final escaped = RegExp.escape(lower).replaceAll(r'\*', '.*');
-      final regex = RegExp('^$escaped\$');
-      return postTags.any((tag) => regex.hasMatch(tag));
+    if (wildcardRegex != null) {
+      return postTags.any(wildcardRegex!.hasMatch);
     }
 
-    // Exact tag matching
-    return postTags.contains(lower);
+    return postTags.contains(core);
   }
 }
 
@@ -149,47 +185,61 @@ class BlacklistProvider with ChangeNotifier {
     _parsedRules = rules;
   }
 
-  /// Loads settings from secure storage
   Future<void> loadSettings() async {
     try {
-      final savedTags = await _storage.read(key: storageKeyTags);
+      final results = await Future.wait([
+        _storage.read(key: storageKeyTags),
+        _storage.read(key: storageKeyEnabled),
+        _storage.read(key: storageKeyPoolPosts),
+        _storage.read(key: storageKeyHideBlacklistedPools),
+        _storage.read(key: storageKeyHideEmptyCollections),
+      ]);
+
+      final savedTags = results[0];
+      final savedEnabled = results[1];
+      final savedPool = results[2];
+      final savedHidePools = results[3];
+      final savedHideEmpty = results[4];
+
+      final writes = <Future<void>>[];
+
       if (savedTags != null) {
         _rawBlacklist = savedTags;
       } else {
         _rawBlacklist = defaultBlacklist;
-        await _storage.write(key: storageKeyTags, value: defaultBlacklist);
+        writes.add(_storage.write(key: storageKeyTags, value: defaultBlacklist));
       }
 
-      final savedEnabled = await _storage.read(key: storageKeyEnabled);
       if (savedEnabled != null) {
         _isEnabled = savedEnabled == 'true';
       } else {
         _isEnabled = true;
-        await _storage.write(key: storageKeyEnabled, value: 'true');
+        writes.add(_storage.write(key: storageKeyEnabled, value: 'true'));
       }
 
-      final savedPool = await _storage.read(key: storageKeyPoolPosts);
       if (savedPool != null) {
         _blacklistPoolPosts = savedPool == 'true';
       } else {
         _blacklistPoolPosts = false;
-        await _storage.write(key: storageKeyPoolPosts, value: 'false');
+        writes.add(_storage.write(key: storageKeyPoolPosts, value: 'false'));
       }
 
-      final savedHidePools = await _storage.read(key: storageKeyHideBlacklistedPools);
       if (savedHidePools != null) {
         _hideBlacklistedPools = savedHidePools == 'true';
       } else {
         _hideBlacklistedPools = false;
-        await _storage.write(key: storageKeyHideBlacklistedPools, value: 'false');
+        writes.add(_storage.write(key: storageKeyHideBlacklistedPools, value: 'false'));
       }
 
-      final savedHideEmpty = await _storage.read(key: storageKeyHideEmptyCollections);
       if (savedHideEmpty != null) {
         _hideEmptyCollections = savedHideEmpty == 'true';
       } else {
         _hideEmptyCollections = true;
-        await _storage.write(key: storageKeyHideEmptyCollections, value: 'true');
+        writes.add(_storage.write(key: storageKeyHideEmptyCollections, value: 'true'));
+      }
+
+      if (writes.isNotEmpty) {
+        await Future.wait(writes);
       }
 
       _parseRules(_rawBlacklist);
@@ -204,7 +254,6 @@ class BlacklistProvider with ChangeNotifier {
     }
   }
 
-  /// Updates and persists the blacklist tags text
   Future<void> saveBlacklist(String newRawText) async {
     _rawBlacklist = newRawText;
     _parseRules(newRawText);
@@ -250,12 +299,10 @@ class BlacklistProvider with ChangeNotifier {
     _safeNotify();
   }
 
-  /// Resets blacklist tags to the default list
   Future<void> resetToDefault() async {
     await saveBlacklist(defaultBlacklist);
   }
 
-  /// Clears all blacklist tags
   Future<void> clearAll() async {
     await saveBlacklist('');
   }
@@ -334,7 +381,14 @@ class BlacklistProvider with ChangeNotifier {
         if (isPostBlacklisted(p, isPool: collection.isPool)) return false;
         return true;
       });
-      return !hasAnyVisible;
+      if (hasAnyVisible) return false;
+      if (!isSafeMode && collection.postCount > collection.posts.length) {
+        return false;
+      }
+      return true;
+    }
+    if (!isSafeMode && (collection.postCount > 0 || collection.postIds.isNotEmpty)) {
+      return false;
     }
     return collection.coverUrl == null || collection.coverUrl!.isEmpty;
   }

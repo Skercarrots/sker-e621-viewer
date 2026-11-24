@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:skerdev_e621/models/post_model.dart';
@@ -305,6 +306,33 @@ void main() {
       // Log out to guest mode - all remain persistent
       await provider.updateForUser(null, isGuest: true);
       expect(provider.refBoards.length, 2);
+    });
+
+    test('does not resurrect deleted legacy ref boards and handles empty board toggles safely', () async {
+      final legacy = RefBoard(
+        id: 'legacy_ref_1',
+        name: 'Legacy Ref',
+        createdAt: DateTime(2025, 1, 1),
+        updatedAt: DateTime(2025, 1, 1),
+        items: const [],
+      );
+      await storage.write(
+        key: 'ref_boards_user_tester',
+        value: jsonEncode([legacy.toJson()]),
+      );
+
+      await provider.updateForUser('tester', isGuest: false);
+      expect(provider.refBoards.map((b) => b.id), ['legacy_ref_1']);
+
+      await provider.toggleItemFlipH('legacy_ref_1', 'missing');
+      await provider.toggleItemFlipV('legacy_ref_1', 'missing');
+      await provider.toggleItemGrayscale('legacy_ref_1', 'missing');
+
+      await provider.deleteRefBoard('legacy_ref_1');
+      expect(provider.refBoards, isEmpty);
+
+      await provider.updateForUser('tester', isGuest: false);
+      expect(provider.refBoards, isEmpty);
     });
   });
 }

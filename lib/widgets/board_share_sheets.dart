@@ -12,12 +12,6 @@ void showShareBoardSheet(
   String? author,
 }) {
   final code = BoardShareService.encodeBoard(board, author: author);
-  final message = BoardShareService.buildShareMessage(
-    name: board.name,
-    itemCount: board.postCount,
-    isRefCanvas: false,
-    shareCode: code,
-  );
 
   showModalBottomSheet<void>(
     context: context,
@@ -29,10 +23,8 @@ void showShareBoardSheet(
     builder: (sheetCtx) => _ShareOutputSheet(
       title: board.name,
       subtitle: '${board.postCount} ${board.postCount == 1 ? "art" : "arts"}',
-      badgeLabel: 'SAVED BOARD',
       accentColor: Colors.blueAccent,
       shareCode: code,
-      fullShareMessage: message,
     ),
   );
 }
@@ -45,12 +37,6 @@ void showShareRefCanvasSheet(
   String? author,
 }) {
   final code = BoardShareService.encodeRefBoard(refBoard, author: author);
-  final message = BoardShareService.buildShareMessage(
-    name: refBoard.name,
-    itemCount: refBoard.itemCount,
-    isRefCanvas: true,
-    shareCode: code,
-  );
 
   showModalBottomSheet<void>(
     context: context,
@@ -63,10 +49,8 @@ void showShareRefCanvasSheet(
       title: refBoard.name,
       subtitle:
           '${refBoard.itemCount} ${refBoard.itemCount == 1 ? "ref" : "refs"} • 2D Layout Included',
-      badgeLabel: 'REF CANVAS',
       accentColor: Colors.cyanAccent,
       shareCode: code,
-      fullShareMessage: message,
     ),
   );
 }
@@ -89,18 +73,14 @@ void showImportSharedModal(BuildContext context) {
 class _ShareOutputSheet extends StatefulWidget {
   final String title;
   final String subtitle;
-  final String badgeLabel;
   final Color accentColor;
   final String shareCode;
-  final String fullShareMessage;
 
   const _ShareOutputSheet({
     required this.title,
     required this.subtitle,
-    required this.badgeLabel,
     required this.accentColor,
     required this.shareCode,
-    required this.fullShareMessage,
   });
 
   @override
@@ -292,6 +272,7 @@ class _ImportSharedSheetState extends State<_ImportSharedSheet> {
 
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData('text/plain');
+    if (!mounted) return;
     final text = data?.text?.trim();
     if (text != null && text.isNotEmpty) {
       _controller.text = text;

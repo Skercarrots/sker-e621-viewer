@@ -37,8 +37,23 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
 
   @override
   void dispose() {
+    if (_isZenMode) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
     _transController.dispose();
     super.dispose();
+  }
+
+  static Color _parseHexColor(String hex) {
+    final cleaned = hex.trim().replaceFirst('#', '');
+    if (cleaned.length == 6) {
+      final parsed = int.tryParse('FF$cleaned', radix: 16);
+      if (parsed != null) return Color(parsed);
+    } else if (cleaned.length == 8) {
+      final parsed = int.tryParse(cleaned, radix: 16);
+      if (parsed != null) return Color(parsed);
+    }
+    return const Color(0xFF191919);
   }
 
   double get _currentScale => _transController.value.getMaxScaleOnAxis();
@@ -59,30 +74,11 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
   }
 
   void _showRenameDialog(RefBoardsProvider provider, RefBoard board) {
-    final controller = TextEditingController(text: board.name);
     showDialog<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: Colors.grey[850],
-        title: const Text('Rename Ref Board'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Board Name', border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogCtx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              final newName = controller.text.trim();
-              if (newName.isNotEmpty) {
-                await provider.renameRefBoard(board.id, newName);
-                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
+      builder: (_) => _RenameRefBoardDialog(
+        initialName: board.name,
+        onSave: (newName) => provider.renameRefBoard(board.id, newName),
       ),
     );
   }
@@ -148,7 +144,7 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
         : sortedItems.where((i) => i.id == _selectedItemId).firstOrNull;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF191919),
+      backgroundColor: _parseHexColor(board.backgroundColorHex),
       appBar: _isZenMode
           ? null
           : AppBar(
@@ -283,10 +279,11 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
                 child: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // Canvas grid texture / background
-                    CustomPaint(
-                      size: const Size(6000, 6000),
-                      painter: _CanvasGridPainter(),
+                    RepaintBoundary(
+                      child: CustomPaint(
+                        size: const Size(6000, 6000),
+                        painter: _CanvasGridPainter(),
+                      ),
                     ),
                     if (sortedItems.isEmpty)
                       Positioned(
@@ -371,19 +368,25 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
 
   Widget _buildCanvasItem(RefBoardItem item, RefBoard board, RefBoardsProvider provider) {
     final isSelected = _selectedItemId == item.id;
+    final resolvedUrl = item.imageUrl.isNotEmpty ? item.imageUrl : (item.previewUrl ?? '');
 
-    Widget imageContent = CachedNetworkImage(
-      imageUrl: item.imageUrl.isNotEmpty ? item.imageUrl : (item.previewUrl ?? ''),
-      fit: BoxFit.cover,
-      placeholder: (context, url) => Container(
-        color: Colors.grey[850],
-        child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-      ),
-      errorWidget: (context, url, error) => Container(
-        color: Colors.grey[850],
-        child: const Icon(Icons.broken_image, color: Colors.grey),
-      ),
-    );
+    Widget imageContent = resolvedUrl.isNotEmpty
+        ? CachedNetworkImage(
+            imageUrl: resolvedUrl,
+            fit: BoxFit.cover,
+            placeholder: (context, url) => Container(
+              color: Colors.grey[850],
+              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+            errorWidget: (context, url, error) => Container(
+              color: Colors.grey[850],
+              child: const Icon(Icons.broken_image, color: Colors.grey),
+            ),
+          )
+        : Container(
+            color: Colors.grey[850],
+            child: const Icon(Icons.image_not_supported, color: Colors.grey),
+          );
 
     if (item.isGrayscale) {
       imageContent = ColorFiltered(
@@ -402,6 +405,13 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
       ),
       child: imageContent,
     );
+
+    if (item.rotation != 0.0) {
+      imageContent = Transform.rotate(
+        angle: item.rotation,
+        child: imageContent,
+      );
+    }
 
     return Positioned(
       left: item.x,
@@ -423,8 +433,11 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
                   item.id,
                   x: item.x + details.delta.dx / scale,
                   y: item.y + details.delta.dy / scale,
+                  persist: false,
                 );
               },
+        onPanEnd: board.isLocked || _isResizing ? null : (_) => provider.saveChanges(),
+        onPanCancel: board.isLocked || _isResizing ? null : () => provider.saveChanges(),
         child: Stack(
           children: [
             Container(
@@ -454,8 +467,14 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
                 bottom: 0,
                 child: GestureDetector(
                   onPanStart: (_) => setState(() => _isResizing = true),
-                  onPanEnd: (_) => setState(() => _isResizing = false),
-                  onPanCancel: () => setState(() => _isResizing = false),
+                  onPanEnd: (_) {
+                    setState(() => _isResizing = false);
+                    provider.saveChanges();
+                  },
+                  onPanCancel: () {
+                    setState(() => _isResizing = false);
+                    provider.saveChanges();
+                  },
                   onPanUpdate: (details) {
                     final scale = math.max(0.01, _currentScale);
                     final newW = math.max(100.0, item.width + details.delta.dx / scale);
@@ -465,6 +484,7 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
                       item.id,
                       width: newW,
                       height: newH,
+                      persist: false,
                     );
                   },
                   child: Container(
@@ -495,84 +515,87 @@ class _RefCanvasPageState extends State<RefCanvasPage> {
           BoxShadow(color: Colors.black87, blurRadius: 12, offset: Offset(0, 4)),
         ],
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: Icon(
-              Icons.flip,
-              color: item.isFlippedH ? Colors.cyanAccent : Colors.white,
-            ),
-            tooltip: 'Flip Horizontal (Mirror)',
-            onPressed: () => provider.toggleItemFlipH(board.id, item.id),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.flip_camera_android_outlined,
-              color: item.isFlippedV ? Colors.cyanAccent : Colors.white,
-            ),
-            tooltip: 'Flip Vertical',
-            onPressed: () => provider.toggleItemFlipV(board.id, item.id),
-          ),
-          IconButton(
-            icon: Icon(
-              Icons.filter_b_and_w,
-              color: item.isGrayscale ? Colors.cyanAccent : Colors.white,
-            ),
-            tooltip: 'B&W Grayscale (Value Check)',
-            onPressed: () => provider.toggleItemGrayscale(board.id, item.id),
-          ),
-          const VerticalDivider(width: 12, thickness: 1, color: Colors.grey),
-          IconButton(
-            icon: const Icon(Icons.flip_to_front, color: Colors.white),
-            tooltip: 'Bring to Front',
-            onPressed: () => provider.bringToFront(board.id, item.id),
-          ),
-          IconButton(
-            icon: const Icon(Icons.flip_to_back, color: Colors.white),
-            tooltip: 'Send to Back',
-            onPressed: () => provider.sendToBack(board.id, item.id),
-          ),
-          if (item.post != null) ...[
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             IconButton(
-              icon: const Icon(Icons.download_outlined, color: Colors.white),
-              tooltip: 'Download Art',
-              onPressed: () {
-                final auth = Provider.of<AuthProvider>(context, listen: false);
-                DownloadService.downloadWithFeedback(
-                  context,
-                  item.post!,
-                  authHeaders: auth.authHeaders,
-                );
-              },
+              icon: Icon(
+                Icons.flip,
+                color: item.isFlippedH ? Colors.cyanAccent : Colors.white,
+              ),
+              tooltip: 'Flip Horizontal (Mirror)',
+              onPressed: () => provider.toggleItemFlipH(board.id, item.id),
             ),
             IconButton(
-              icon: const Icon(Icons.open_in_new, color: Colors.blueAccent),
-              tooltip: 'View Full Post Details',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => PostDetailPage(
-                      post: item.post!,
-                      posts: [item.post!],
-                      initialIndex: 0,
-                      heroTagPrefix: 'ref-canvas-${item.id}',
+              icon: Icon(
+                Icons.flip_camera_android_outlined,
+                color: item.isFlippedV ? Colors.cyanAccent : Colors.white,
+              ),
+              tooltip: 'Flip Vertical',
+              onPressed: () => provider.toggleItemFlipV(board.id, item.id),
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.filter_b_and_w,
+                color: item.isGrayscale ? Colors.cyanAccent : Colors.white,
+              ),
+              tooltip: 'B&W Grayscale (Value Check)',
+              onPressed: () => provider.toggleItemGrayscale(board.id, item.id),
+            ),
+            const VerticalDivider(width: 12, thickness: 1, color: Colors.grey),
+            IconButton(
+              icon: const Icon(Icons.flip_to_front, color: Colors.white),
+              tooltip: 'Bring to Front',
+              onPressed: () => provider.bringToFront(board.id, item.id),
+            ),
+            IconButton(
+              icon: const Icon(Icons.flip_to_back, color: Colors.white),
+              tooltip: 'Send to Back',
+              onPressed: () => provider.sendToBack(board.id, item.id),
+            ),
+            if (item.post != null) ...[
+              IconButton(
+                icon: const Icon(Icons.download_outlined, color: Colors.white),
+                tooltip: 'Download Art',
+                onPressed: () {
+                  final auth = Provider.of<AuthProvider>(context, listen: false);
+                  DownloadService.downloadWithFeedback(
+                    context,
+                    item.post!,
+                    authHeaders: auth.mediaHeaders,
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.open_in_new, color: Colors.blueAccent),
+                tooltip: 'View Full Post Details',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => PostDetailPage(
+                        post: item.post!,
+                        posts: [item.post!],
+                        initialIndex: 0,
+                        heroTagPrefix: 'ref-canvas-${item.id}',
+                      ),
                     ),
-                  ),
-                );
+                  );
+                },
+              ),
+            ],
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              tooltip: 'Remove from Canvas',
+              onPressed: () {
+                provider.removeItem(board.id, item.id);
+                setState(() => _selectedItemId = null);
               },
             ),
           ],
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-            tooltip: 'Remove from Canvas',
-            onPressed: () {
-              provider.removeItem(board.id, item.id);
-              setState(() => _selectedItemId = null);
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -688,8 +711,13 @@ class _AddContentModalState extends State<_AddContentModal> with SingleTickerPro
                                   width: 50,
                                   height: 50,
                                   color: Colors.grey[800],
-                                  child: b.coverUrl != null
-                                      ? CachedNetworkImage(imageUrl: b.coverUrl!, fit: BoxFit.cover)
+                                  child: (b.coverUrl != null && b.coverUrl!.isNotEmpty)
+                                      ? CachedNetworkImage(
+                                          imageUrl: b.coverUrl!,
+                                          fit: BoxFit.cover,
+                                          errorWidget: (context, url, error) =>
+                                              const Icon(Icons.photo_library),
+                                        )
                                       : const Icon(Icons.photo_library),
                                 ),
                               ),
@@ -703,13 +731,15 @@ class _AddContentModalState extends State<_AddContentModal> with SingleTickerPro
                                 icon: const Icon(Icons.download, size: 16),
                                 label: const Text('Import All'),
                                 onPressed: () async {
+                                  final messenger = ScaffoldMessenger.of(context);
+                                  final navigator = Navigator.of(context);
                                   final count = await widget.refProvider.addEntireBoardToRefBoard(
                                     widget.refBoard.id,
                                     b,
                                   );
                                   if (context.mounted) {
-                                    Navigator.pop(context);
-                                    ScaffoldMessenger.of(context).showSnackBar(
+                                    navigator.pop();
+                                    messenger.showSnackBar(
                                       SnackBar(content: Text('Imported $count arts from "${b.name}"!')),
                                     );
                                   }
@@ -724,10 +754,12 @@ class _AddContentModalState extends State<_AddContentModal> with SingleTickerPro
                     scrollController: scrollController,
                     boardsProvider: widget.boardsProvider,
                     onSelectPost: (post) async {
+                      final messenger = ScaffoldMessenger.of(context);
+                      final navigator = Navigator.of(context);
                       await widget.refProvider.addPostToRefBoard(widget.refBoard.id, post);
                       if (context.mounted) {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        navigator.pop();
+                        messenger.showSnackBar(
                           SnackBar(content: Text('Added art #${post.id} to Ref Board!')),
                         );
                       }
@@ -796,12 +828,17 @@ class _SavedArtsPicker extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                CachedNetworkImage(
-                  imageUrl: post.previewUrl ?? '',
-                  fit: BoxFit.cover,
-                  placeholder: (context, url) => Container(color: Colors.grey[850]),
-                  errorWidget: (context, url, error) => const Icon(Icons.broken_image),
-                ),
+                (post.previewUrl != null && post.previewUrl!.isNotEmpty)
+                    ? CachedNetworkImage(
+                        imageUrl: post.previewUrl!,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => Container(color: Colors.grey[850]),
+                        errorWidget: (context, url, error) => const Icon(Icons.broken_image),
+                      )
+                    : Container(
+                        color: Colors.grey[850],
+                        child: const Icon(Icons.image_not_supported, color: Colors.grey),
+                      ),
                 Positioned(
                   bottom: 4,
                   right: 4,
@@ -819,6 +856,59 @@ class _SavedArtsPicker extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _RenameRefBoardDialog extends StatefulWidget {
+  final String initialName;
+  final Future<bool> Function(String) onSave;
+
+  const _RenameRefBoardDialog({
+    required this.initialName,
+    required this.onSave,
+  });
+
+  @override
+  State<_RenameRefBoardDialog> createState() => _RenameRefBoardDialogState();
+}
+
+class _RenameRefBoardDialogState extends State<_RenameRefBoardDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final newName = _controller.text.trim();
+    if (newName.isNotEmpty) {
+      await widget.onSave(newName);
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.grey[850],
+      title: const Text('Rename Ref Board'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Board Name', border: OutlineInputBorder()),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        ElevatedButton(
+          onPressed: _submit,
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

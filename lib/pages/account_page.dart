@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import '../providers/auth_provider.dart';
 import '../providers/boards_provider.dart';
@@ -50,8 +49,9 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
   // Feature flag to temporarily hide the "My Uploads" tab while keeping its implementation intact.
   final bool _showMyUploadsTab = false;
 
-  // NEW: Session-based dismissal of the guest warning
   bool _isWarningDismissed = false;
+  VoidCallback? _authListener;
+  AuthProvider? _authForListener;
 
   @override
   void initState() {
@@ -62,7 +62,8 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
     _lastFavVersion = auth.favoritesUpdateTrigger;
 
     _scrollController.addListener(() {
-      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.8) {
+      if (_scrollController.hasClients &&
+          _scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.8) {
         if (!_isLoadingFavs && _hasMore) {
           _fetchFavorites();
         }
@@ -96,6 +97,11 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
 
   @override
   void dispose() {
+    if (_authListener != null && _authForListener != null) {
+      _authForListener!.removeListener(_authListener!);
+      _authListener = null;
+      _authForListener = null;
+    }
     _scrollController.dispose();
     _uploadsScrollController.dispose();
     _tabController.dispose();
@@ -116,7 +122,9 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         _fetchUploads();
       }
     } else {
-      void listener() {
+      _authForListener = auth;
+      _authListener = () {
+        if (!mounted) return;
         if ((auth.isLoggedIn && auth.user != null) || auth.isGuestMode) {
           boards.updateForUser(auth.user?.name, isGuest: auth.isGuestMode);
           refBoards.updateForUser(auth.user?.name, isGuest: auth.isGuestMode);
@@ -124,10 +132,14 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
           if (_showMyUploadsTab && auth.isLoggedIn && auth.user != null) {
             _fetchUploads();
           }
-          auth.removeListener(listener);
+          if (_authListener != null) {
+            auth.removeListener(_authListener!);
+            _authListener = null;
+            _authForListener = null;
+          }
         }
-      }
-      auth.addListener(listener);
+      };
+      auth.addListener(_authListener!);
     }
   }
 
@@ -164,6 +176,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
       final String searchText = _searchController.text.trim();
       if (auth.isGuestMode) {
         List<E621Post> localFavs = await auth.getGuestFavorites();
+        if (!mounted) return;
         localFavs = localFavs
             .where((post) => !auth.isSafeMode || post.rating.toLowerCase() == 's')
             .toList()
@@ -171,37 +184,36 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
             .toList();
 
         if (searchText.isNotEmpty) {
-           final searchTerms = searchText.toLowerCase().split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-           localFavs = localFavs.where((post) {
-             return searchTerms.every((term) => 
-               post.generalTags.any((t) => t.toLowerCase().contains(term)) || 
-               post.artistTags.any((t) => t.toLowerCase().contains(term)) ||
-               post.characterTags.any((t) => t.toLowerCase().contains(term)) ||
-               post.speciesTags.any((t) => t.toLowerCase().contains(term)) ||
-               post.copyrightTags.any((t) => t.toLowerCase().contains(term))
-             );
-           }).toList();
+          localFavs = localFavs.where((post) => post.matchesKeywordQuery(searchText)).toList();
         }
-        
+
         int start = (_favPage - 1) * 20;
         int end = start + 20;
-        
+
         if (start >= localFavs.length) {
-           setState(() { _hasMore = false; });
+          setState(() {
+            _hasMore = false;
+            _isLoadingFavs = false;
+          });
         } else {
-           List<E621Post> paged = localFavs.sublist(start, end > localFavs.length ? localFavs.length : end);
-           setState(() {
-              _favPosts.addAll(paged);
-              _favPage++;
-              _hasMore = end < localFavs.length;
-           });
+          List<E621Post> paged =
+              localFavs.sublist(start, end > localFavs.length ? localFavs.length : end);
+          setState(() {
+            _favPosts.addAll(paged);
+            _favPage++;
+            _hasMore = end < localFavs.length;
+            _isLoadingFavs = false;
+          });
         }
       } else {
         final int userId = auth.user!.id;
         final Uri uri;
 
         if (searchText.isNotEmpty) {
-          final String searchTags = "fav:${auth.user!.name} $searchText order:favat";
+          final hasOrder = searchText.toLowerCase().contains('order:');
+          final String searchTags = hasOrder
+              ? "fav:${auth.user!.name} $searchText"
+              : "fav:${auth.user!.name} $searchText order:favat";
           uri = Uri.https(
             auth.host,
             '/posts.json',
@@ -227,14 +239,15 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
           );
         }
 
-        final response = await http.get(uri, headers: auth.authHeaders);
+        final response = await auth.httpClient.get(uri, headers: auth.authHeaders);
+        if (!mounted) return;
 
         if (response.statusCode == 200) {
           final dynamic data = json.decode(response.body);
           final List<dynamic> postsJson = (data is List)
               ? data
               : (data is Map && data['posts'] is List ? data['posts'] as List<dynamic> : []);
-          
+
           final newPosts = postsJson
               .whereType<Map<String, dynamic>>()
               .map((json) => E621Post.fromJson(json))
@@ -245,13 +258,21 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
 
           auth.registerFavorites(newPosts.map((p) => p.id).toList());
 
+          final hasMoreServer = postsJson.length >= 20;
           setState(() {
-            if (newPosts.isEmpty) {
-              _hasMore = false;
-            } else {
-              _favPosts.addAll(newPosts);
-              _favPage++;
-            }
+            _favPosts.addAll(newPosts);
+            _favPage++;
+            _hasMore = hasMoreServer;
+            _isLoadingFavs = false;
+          });
+
+          if (newPosts.isEmpty && _hasMore && _favPage <= 5) {
+            _fetchFavorites();
+          }
+        } else {
+          setState(() {
+            _hasMore = false;
+            _isLoadingFavs = false;
           });
         }
       }
@@ -300,7 +321,8 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         },
       );
 
-      final response = await http.get(uri, headers: auth.authHeaders);
+      final response = await auth.httpClient.get(uri, headers: auth.authHeaders);
+      if (!mounted) return;
 
       if (response.statusCode == 200) {
         final dynamic data = json.decode(response.body);
@@ -316,24 +338,27 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
                 (!auth.isSafeMode || post.rating.toLowerCase() == 's'))
             .toList();
 
+        final hasMoreServer = postsJson.length >= 30;
         setState(() {
-          if (newPosts.isEmpty) {
-            _hasMoreUploads = false;
-          } else {
-            _uploadedPosts.addAll(newPosts);
-            _uploadPage++;
-            if (newPosts.length < 30) {
-              _hasMoreUploads = false;
-            }
-          }
+          _uploadedPosts.addAll(newPosts);
+          _uploadPage++;
+          _hasMoreUploads = hasMoreServer;
+          _isLoadingUploads = false;
         });
+
+        if (newPosts.isEmpty && _hasMoreUploads && _uploadPage <= 5) {
+          _fetchUploads();
+        }
       } else {
-        setState(() => _hasMoreUploads = false);
+        setState(() {
+          _hasMoreUploads = false;
+          _isLoadingUploads = false;
+        });
       }
     } catch (e) {
       debugPrint('Error fetching uploads: $e');
     } finally {
-      if (mounted) setState(() => _isLoadingUploads = false);
+      if (mounted && _isLoadingUploads) setState(() => _isLoadingUploads = false);
     }
   }
 
@@ -341,28 +366,19 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
 
-    // If version changed, it means user unlinked or changed status
     if (_lastFavVersion != authProvider.favoritesUpdateTrigger) {
       _lastFavVersion = authProvider.favoritesUpdateTrigger;
-      
-      final boards = Provider.of<BoardsProvider>(context, listen: false);
-      final refBoards = Provider.of<RefBoardsProvider>(context, listen: false);
-      boards.updateForUser(authProvider.user?.name, isGuest: authProvider.isGuestMode);
-      refBoards.updateForUser(authProvider.user?.name, isGuest: authProvider.isGuestMode);
-
-      // Clear current list immediately if they logged out/unlinked
-      if (!authProvider.isLoggedIn && !authProvider.isGuestMode) {
-        _favPosts.clear();
-        _uploadedPosts.clear();
-        _searchController.clear();
-      }
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _refreshFavorites();
-          if (_showMyUploadsTab && authProvider.isLoggedIn && authProvider.user != null) {
-            _refreshUploads();
-          }
+        if (!mounted) return;
+        if (!authProvider.isLoggedIn && !authProvider.isGuestMode) {
+          _favPosts.clear();
+          _uploadedPosts.clear();
+          _searchController.clear();
+        }
+        _refreshFavorites();
+        if (_showMyUploadsTab && authProvider.isLoggedIn && authProvider.user != null) {
+          _refreshUploads();
         }
       });
     }
@@ -664,7 +680,6 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
             const SizedBox(height: 8),
             TextButton(
               onPressed: () {
-                // Reset dismissal state when entering Guest mode
                 setState(() => _isWarningDismissed = false);
                 auth.setGuestMode(true);
               },
@@ -812,7 +827,6 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         children: [
           Row(
             children: [
-              // Profile Avatar with vibrant gradient ring
               Container(
                 padding: const EdgeInsets.all(2.5),
                 decoration: BoxDecoration(
@@ -853,7 +867,6 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
                 ),
               ),
               const SizedBox(width: 16),
-              // Creator Stat Columns
               Expanded(
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -867,7 +880,6 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
             ],
           ),
           const SizedBox(height: 12),
-          // Username
           Text(
             user.name,
             style: const TextStyle(
@@ -877,7 +889,6 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
             ),
           ),
           const SizedBox(height: 4),
-          // User Level badge and ID
           Row(
             children: [
               Container(
@@ -1095,43 +1106,13 @@ class _SavedBoardsTabState extends State<_SavedBoardsTab>
   bool get wantKeepAlive => true;
 
   void _showCreateBoardDialog(BuildContext context, BoardsProvider boardsProvider) {
-    final controller = TextEditingController();
     showDialog<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: Colors.grey[850],
-        title: const Text('Create Saved Board'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            hintText: 'e.g. Dragons, Wallpapers, Favorites',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (val) async {
-            if (val.trim().isNotEmpty) {
-              await boardsProvider.createBoard(val.trim());
-              if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-            }
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                await boardsProvider.createBoard(name);
-                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-              }
-            },
-            child: const Text('Create'),
-          ),
-        ],
+      builder: (_) => _CreateNameDialog(
+        title: 'Create Saved Board',
+        hintText: 'e.g. Dragons, Wallpapers, Favorites',
+        confirmLabel: 'Create',
+        onSubmit: (name) => boardsProvider.createBoard(name),
       ),
     );
   }
@@ -1391,28 +1372,29 @@ class _SavedBoardsTabState extends State<_SavedBoardsTab>
           child: Row(
             children: [
               Expanded(
-                child: CachedNetworkImage(
-                  imageUrl: posts.length > 2 ? posts[2].previewUrl ?? '' : '',
-                  fit: BoxFit.cover,
-                  height: double.infinity,
-                  placeholder: (context, url) => Container(color: Colors.grey[800]),
-                  errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
-                ),
+                child: _buildCollageTile(posts.length > 2 ? posts[2].previewUrl : null),
               ),
               const SizedBox(width: 1),
               Expanded(
-                child: CachedNetworkImage(
-                  imageUrl: posts.length > 3 ? posts[3].previewUrl ?? '' : '',
-                  fit: BoxFit.cover,
-                  height: double.infinity,
-                  placeholder: (context, url) => Container(color: Colors.grey[800]),
-                  errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
-                ),
+                child: _buildCollageTile(posts.length > 3 ? posts[3].previewUrl : null),
               ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCollageTile(String? url) {
+    if (url == null || url.isEmpty) {
+      return Container(color: Colors.grey[800]);
+    }
+    return CachedNetworkImage(
+      imageUrl: url,
+      fit: BoxFit.cover,
+      height: double.infinity,
+      placeholder: (context, url) => Container(color: Colors.grey[800]),
+      errorWidget: (context, url, error) => Container(color: Colors.grey[800]),
     );
   }
 }
@@ -1433,59 +1415,23 @@ class _RefCanvasesTabState extends State<_RefCanvasesTab>
   bool get wantKeepAlive => true;
 
   void _showCreateRefBoardDialog(BuildContext context, RefBoardsProvider provider) {
-    final controller = TextEditingController();
+    final navigator = Navigator.of(context);
     showDialog<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: Colors.grey[850],
-        title: const Text('New Ref Canvas'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            hintText: 'e.g. Pose Studies, Anatomy, Lighting',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (val) async {
-            if (val.trim().isNotEmpty) {
-              final newBoard = await provider.createRefBoard(val.trim());
-              if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-              if (context.mounted) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: newBoard.id)),
-                );
-              }
-            }
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.cyanAccent,
-              foregroundColor: Colors.black,
-            ),
-            onPressed: () async {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                final newBoard = await provider.createRefBoard(name);
-                if (dialogCtx.mounted) Navigator.pop(dialogCtx);
-                if (context.mounted) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: newBoard.id)),
-                  );
-                }
-              }
-            },
-            child: const Text('Create Canvas'),
-          ),
-        ],
+      builder: (_) => _CreateNameDialog(
+        title: 'New Ref Canvas',
+        hintText: 'e.g. Pose Studies, Anatomy, Lighting',
+        confirmLabel: 'Create Canvas',
+        confirmBgColor: Colors.cyanAccent,
+        confirmFgColor: Colors.black,
+        onSubmit: (name) async {
+          final newBoard = await provider.createRefBoard(name);
+          if (mounted) {
+            navigator.push(
+              MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: newBoard.id)),
+            );
+          }
+        },
       ),
     );
   }
@@ -1794,8 +1740,7 @@ class _ExpandableCornerFab extends StatefulWidget {
   State<_ExpandableCornerFab> createState() => _ExpandableCornerFabState();
 }
 
-class _ExpandableCornerFabState extends State<_ExpandableCornerFab>
-    with SingleTickerProviderStateMixin {
+class _ExpandableCornerFabState extends State<_ExpandableCornerFab> {
   bool _isOpen = false;
 
   void _toggle() {
@@ -1947,6 +1892,79 @@ class _ExpandableCornerFabState extends State<_ExpandableCornerFab>
           ),
         ),
       ),
+    );
+  }
+}
+
+class _CreateNameDialog extends StatefulWidget {
+  final String title;
+  final String hintText;
+  final String confirmLabel;
+  final Color? confirmBgColor;
+  final Color? confirmFgColor;
+  final Future<void> Function(String name) onSubmit;
+
+  const _CreateNameDialog({
+    required this.title,
+    required this.hintText,
+    required this.confirmLabel,
+    this.confirmBgColor,
+    this.confirmFgColor,
+    required this.onSubmit,
+  });
+
+  @override
+  State<_CreateNameDialog> createState() => _CreateNameDialogState();
+}
+
+class _CreateNameDialogState extends State<_CreateNameDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final name = _controller.text.trim();
+    if (name.isNotEmpty) {
+      if (mounted) Navigator.pop(context);
+      await widget.onSubmit(name);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.grey[850],
+      title: Text(widget.title),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: InputDecoration(
+          hintText: widget.hintText,
+          border: const OutlineInputBorder(),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          style: widget.confirmBgColor != null
+              ? ElevatedButton.styleFrom(
+                  backgroundColor: widget.confirmBgColor,
+                  foregroundColor: widget.confirmFgColor,
+                )
+              : null,
+          onPressed: _submit,
+          child: Text(widget.confirmLabel),
+        ),
+      ],
     );
   }
 }

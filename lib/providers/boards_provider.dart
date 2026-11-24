@@ -11,6 +11,7 @@ class BoardsProvider with ChangeNotifier {
   List<Board> _boards = [];
   bool _isLoading = false;
   bool _isInitialized = false;
+  final Set<String> _migratedUsers = {};
 
   BoardsProvider({FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
@@ -41,10 +42,14 @@ class BoardsProvider with ChangeNotifier {
       await loadBoards();
     }
 
-    // If logging into an existing user account, merge any legacy user boards if present
-    if (username != null && username.isNotEmpty && !isGuest) {
+    if (username != null &&
+        username.isNotEmpty &&
+        !isGuest &&
+        !_migratedUsers.contains(username)) {
+      _migratedUsers.add(username);
+      final legacyKey = 'boards_user_$username';
       try {
-        final legacyUserData = await _storage.read(key: 'boards_user_$username');
+        final legacyUserData = await _storage.read(key: legacyKey);
         if (legacyUserData != null && legacyUserData.isNotEmpty) {
           final List<dynamic> decoded = jsonDecode(legacyUserData);
           final userBoards = decoded
@@ -64,6 +69,11 @@ class BoardsProvider with ChangeNotifier {
             _boards.sort((a, b) => b.createdAt.compareTo(a.createdAt));
             await _persistBoards();
             notifyListeners();
+          }
+          try {
+            await _storage.delete(key: legacyKey);
+          } catch (_) {
+            await _storage.write(key: legacyKey, value: '');
           }
         }
       } catch (e) {
@@ -168,7 +178,6 @@ class BoardsProvider with ChangeNotifier {
     return newBoard;
   }
 
-  /// Renames an existing board
   Future<bool> renameBoard(String boardId, String newName) async {
     final index = _boards.indexWhere((b) => b.id == boardId);
     if (index == -1) return false;
@@ -182,7 +191,6 @@ class BoardsProvider with ChangeNotifier {
     return true;
   }
 
-  /// Deletes a board
   Future<bool> deleteBoard(String boardId) async {
     final int initialLength = _boards.length;
     _boards.removeWhere((b) => b.id == boardId);
@@ -201,7 +209,7 @@ class BoardsProvider with ChangeNotifier {
 
     final board = _boards[index];
     if (board.postIds.contains(post.id)) {
-      return false; // Already present
+      return false;
     }
 
     final updatedPostIds = [post.id, ...board.postIds];
@@ -217,7 +225,6 @@ class BoardsProvider with ChangeNotifier {
     return true;
   }
 
-  /// Removes a post from a board
   Future<bool> removePostFromBoard(String boardId, int postId) async {
     final index = _boards.indexWhere((b) => b.id == boardId);
     if (index == -1) return false;
@@ -240,29 +247,25 @@ class BoardsProvider with ChangeNotifier {
     return true;
   }
 
-  /// Toggles post presence in a board
   Future<bool> togglePostInBoard(String boardId, E621Post post) async {
     if (isPostInBoard(boardId, post.id)) {
       await removePostFromBoard(boardId, post.id);
-      return false; // Now not in board
+      return false;
     } else {
       await addPostToBoard(boardId, post);
-      return true; // Now in board
+      return true;
     }
   }
 
-  /// Checks if a post is in a specific board
   bool isPostInBoard(String boardId, int postId) {
     final board = getBoardById(boardId);
     return board != null && board.postIds.contains(postId);
   }
 
-  /// Returns all boards that contain a specific post
   List<Board> getBoardsContainingPost(int postId) {
     return _boards.where((b) => b.postIds.contains(postId)).toList();
   }
 
-  /// Look up a board by ID
   Board? getBoardById(String boardId) {
     try {
       return _boards.firstWhere((b) => b.id == boardId);

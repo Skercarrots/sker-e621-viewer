@@ -238,11 +238,24 @@ class _FollowingTabState extends State<_FollowingTab> {
     final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
 
     try {
-      final sets = await api.searchSets(creatorName: username, limit: 50);
+      final allSets = <E621Collection>[];
+      final seenIds = <int>{};
+      for (var page = 1; page <= 5; page++) {
+        final sets = await api.searchSets(
+          creatorName: username,
+          page: page,
+          limit: 50,
+        );
+        for (final s in sets) {
+          if (seenIds.add(s.id)) allSets.add(s);
+        }
+        if (!api.lastSearchHadMore) break;
+      }
       if (mounted) {
         setState(() {
-          _mySets.clear();
-          _mySets.addAll(sets);
+          _mySets
+            ..clear()
+            ..addAll(allSets);
           _loadedMySetsUser = username;
           _isLoadingMySets = false;
         });
@@ -258,20 +271,38 @@ class _FollowingTabState extends State<_FollowingTab> {
     final auth = Provider.of<AuthProvider>(context);
     final follows = Provider.of<FollowsProvider>(context);
 
-    // If user selected "My Sets" and haven't loaded yet
-    if (_selectedFilter == 'my_sets' &&
-        auth.isLoggedIn &&
-        auth.user != null &&
+    if (!auth.isLoggedIn || auth.user == null) {
+      if (_selectedFilter == 'my_sets' || _mySets.isNotEmpty || _loadedMySetsUser != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            if (_selectedFilter == 'my_sets') _selectedFilter = 'all';
+            _mySets.clear();
+            _loadedMySetsUser = null;
+          });
+        });
+      }
+    } else if (_selectedFilter == 'my_sets' &&
         _loadedMySetsUser != auth.user!.name &&
         !_isLoadingMySets) {
-      _fetchMySets(auth.user!.name);
+      final username = auth.user!.name;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _loadedMySetsUser != username && !_isLoadingMySets) {
+          _fetchMySets(username);
+        }
+      });
     }
+
+    final effectiveFilter =
+        (!auth.isLoggedIn || auth.user == null) && _selectedFilter == 'my_sets'
+            ? 'all'
+            : _selectedFilter;
 
     final query = _searchController.text.trim();
     final List<FollowedCollection> allItems;
-    if (_selectedFilter == 'pools') {
+    if (effectiveFilter == 'pools') {
       allItems = follows.followedPools;
-    } else if (_selectedFilter == 'sets') {
+    } else if (effectiveFilter == 'sets') {
       allItems = follows.followedSets;
     } else {
       allItems = follows.follows;
@@ -298,7 +329,7 @@ class _FollowingTabState extends State<_FollowingTab> {
                 if (auth.isLoggedIn && auth.user != null)
                   ('my_sets', 'My Sets (${_mySets.length})'),
               ],
-              selected: _selectedFilter,
+              selected: effectiveFilter,
               onSelected: (value) => setState(() => _selectedFilter = value),
             ),
           ),
@@ -306,7 +337,7 @@ class _FollowingTabState extends State<_FollowingTab> {
 
         // Content
         Expanded(
-          child: _selectedFilter == 'my_sets'
+          child: effectiveFilter == 'my_sets'
               ? _buildMySetsContent()
               : RefreshIndicator(
                   onRefresh: _refreshFollowsBackground,
@@ -413,7 +444,12 @@ class _FollowingTabState extends State<_FollowingTab> {
     final shownSets = _applySearch(_mySets, query);
 
     return RefreshIndicator(
-      onRefresh: () => _fetchMySets(auth.user!.name),
+      onRefresh: () async {
+        final user = auth.user;
+        if (user != null) {
+          await _fetchMySets(user.name);
+        }
+      },
       child: shownSets.isEmpty
           ? _buildNoMatches()
           : GridView.builder(
@@ -469,8 +505,9 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
     _fetchPools(reset: true);
 
     _scrollController.addListener(() {
-      if (_scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent - 300) {
+      if (_scrollController.hasClients &&
+          _scrollController.position.pixels >=
+              _scrollController.position.maxScrollExtent - 300) {
         _fetchPools();
       }
     });
@@ -557,6 +594,7 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
 
       if (!mounted || generation != _generation) return;
 
+      final hasMoreFromServer = results.length >= 20 || api.lastSearchHadMore;
       setState(() {
         if (reset) _pools.clear();
         final existingIds = _pools.map((p) => p.id).toSet();
@@ -576,7 +614,7 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
           ..clear()
           ..addAll(sorted);
 
-        if (results.length < 20) {
+        if (!hasMoreFromServer) {
           _hasMore = false;
         } else {
           _page++;
@@ -588,9 +626,13 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
       final bl = Provider.of<BlacklistProvider>(context, listen: false);
       final visibleCount =
           _visiblePools(bl, activeQuery, isSafeMode: auth.isSafeMode).length;
-      final maxPage =
-          (f.minPosts > 0 || (auth.isSafeMode && bl.hideEmptyCollections)) ? 10 : 4;
-      if (visibleCount < 6 && _page <= maxPage && results.isNotEmpty && _hasMore) {
+      final maxPage = (f.minPosts > 0 ||
+              f.isBroadSearch ||
+              bl.hideEmptyCollections ||
+              bl.isEnabled)
+          ? 10
+          : 4;
+      if (visibleCount < 8 && _page <= maxPage && _hasMore) {
         _fetchPools();
       }
     } catch (e) {
@@ -608,7 +650,6 @@ class _PoolsTabState extends State<_PoolsTab> with AutomaticKeepAliveClientMixin
       _lastHost = auth.host;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _isLoading = false;
           _fetchPools(reset: true);
         }
       });
@@ -757,8 +798,9 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
     _fetchSets(reset: true);
 
     _scrollController.addListener(() {
-      if (_scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent - 300) {
+      if (_scrollController.hasClients &&
+          _scrollController.position.pixels >=
+              _scrollController.position.maxScrollExtent - 300) {
         _fetchSets();
       }
     });
@@ -841,6 +883,7 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
 
       if (!mounted || generation != _generation) return;
 
+      final hasMoreFromServer = results.length >= 20 || api.lastSearchHadMore;
       setState(() {
         if (reset) _sets.clear();
         final existingIds = _sets.map((s) => s.id).toSet();
@@ -859,7 +902,7 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
         _sets
           ..clear()
           ..addAll(sorted);
-        if (results.length < 20) {
+        if (!hasMoreFromServer) {
           _hasMore = false;
         } else {
           _page++;
@@ -871,9 +914,13 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
       final bl = Provider.of<BlacklistProvider>(context, listen: false);
       final visibleCount =
           _visibleSets(bl, activeQuery, isSafeMode: auth.isSafeMode).length;
-      final maxPage =
-          (f.minPosts > 0 || (auth.isSafeMode && bl.hideEmptyCollections)) ? 10 : 4;
-      if (visibleCount < 6 && _page <= maxPage && results.isNotEmpty && _hasMore) {
+      final maxPage = (f.minPosts > 0 ||
+              f.isBroadSearch ||
+              bl.hideEmptyCollections ||
+              bl.isEnabled)
+          ? 10
+          : 4;
+      if (visibleCount < 8 && _page <= maxPage && _hasMore) {
         _fetchSets();
       }
     } catch (e) {
@@ -891,7 +938,6 @@ class _SetsTabState extends State<_SetsTab> with AutomaticKeepAliveClientMixin {
       _lastHost = auth.host;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _isLoading = false;
           _fetchSets(reset: true);
         }
       });

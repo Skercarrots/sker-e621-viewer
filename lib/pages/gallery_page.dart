@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/post_model.dart';
 import 'details_page.dart';
@@ -12,7 +11,7 @@ import '../widgets/tag_search_bar.dart';
 import 'settings_page.dart';
 
 class E621GalleryPage extends StatefulWidget {
-  final String? initialSearch; // NEW: Accepts an initial search query
+  final String? initialSearch;
   final TagAutocompleteService? autocompleteService;
   const E621GalleryPage({
     super.key,
@@ -31,7 +30,9 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
   final TextEditingController _searchController = TextEditingController();
 
   bool _isLoading = false;
+  bool _hasMore = true;
   int _page = 1;
+  int _generation = 0;
   String _currentTags = '';
   String? _lastHost;
 
@@ -41,18 +42,19 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
   @override
   void initState() {
     super.initState();
-    
-    // NEW: Check if an initial search was passed from a tag click
+
     if (widget.initialSearch != null && widget.initialSearch!.isNotEmpty) {
       _currentTags = widget.initialSearch!;
       _searchController.text = widget.initialSearch!;
     }
-    
+
     _lastHost = Provider.of<AuthProvider>(context, listen: false).host;
     _fetchPosts();
 
     _scrollController.addListener(() {
-      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200) {
+      if (_scrollController.hasClients &&
+          _scrollController.position.pixels >=
+              _scrollController.position.maxScrollExtent - 200) {
         _fetchPosts();
       }
     });
@@ -66,18 +68,23 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
   }
 
   void _startSearch(String query) {
-    setState(() {
-      _posts.clear();
-      _visiblePosts.clear();
-      _page = 1;
-      _currentTags = query;
-    });
-    _fetchPosts();
+    _currentTags = query;
+    _fetchPosts(reset: true);
   }
 
-  Future<void> _fetchPosts() async {
-    if (_isLoading) return;
-    setState(() => _isLoading = true);
+  Future<void> _fetchPosts({bool reset = false}) async {
+    if (!reset && (_isLoading || !_hasMore)) return;
+
+    final int gen = reset ? ++_generation : _generation;
+    setState(() {
+      _isLoading = true;
+      if (reset) {
+        _posts.clear();
+        _visiblePosts.clear();
+        _page = 1;
+        _hasMore = true;
+      }
+    });
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
@@ -96,8 +103,9 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
           'mode': 'extended',
         },
       );
-      
-      final response = await http.get(uri, headers: authProvider.authHeaders);
+
+      final response = await authProvider.httpClient.get(uri, headers: authProvider.authHeaders);
+      if (!mounted || gen != _generation) return;
 
       if (response.statusCode == 200) {
         final dynamic data = json.decode(response.body);
@@ -118,28 +126,29 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
           }
         }
 
-        if (mounted) {
-          final bl = Provider.of<BlacklistProvider>(context, listen: false);
-          setState(() {
-            _posts.addAll(newPosts);
-            _visiblePosts
-              ..clear()
-              ..addAll(bl.filterPosts(_posts, isPool: false));
-            _page++;
-            _isLoading = false;
-          });
+        final bl = Provider.of<BlacklistProvider>(context, listen: false);
+        setState(() {
+          _posts.addAll(newPosts);
+          _visiblePosts
+            ..clear()
+            ..addAll(bl.filterPosts(_posts, isPool: false));
+          _page++;
+          _hasMore = postsJson.length >= 20;
+          _isLoading = false;
+        });
 
-          // If a high percentage of items was filtered by blacklist on page 1, fetch next batch
-          if (_visiblePosts.length < 10 && _page <= 4 && newPosts.isNotEmpty) {
-            _fetchPosts();
-          }
+        // If a high percentage of items was filtered by blacklist on early pages, fetch next batch
+        if (_visiblePosts.length < 10 && _page <= 4 && _hasMore && postsJson.isNotEmpty) {
+          _fetchPosts();
         }
       } else {
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      setState(() => _isLoading = false);
       debugPrint('Error: $e');
+      if (mounted && gen == _generation) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -150,13 +159,7 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
       _lastHost = authProvider.host;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          setState(() {
-            _posts.clear();
-            _visiblePosts.clear();
-            _page = 1;
-            _isLoading = false;
-          });
-          _fetchPosts();
+          _fetchPosts(reset: true);
         }
       });
     }

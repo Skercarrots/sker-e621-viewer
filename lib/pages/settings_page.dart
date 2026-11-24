@@ -49,44 +49,9 @@ class SettingsPage extends StatelessWidget {
       if (!confirmedOver18 || !context.mounted) return;
     }
 
-    final controller = TextEditingController(text: authProvider.host);
-
     final newHostInput = await showDialog<String>(
       context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          backgroundColor: Colors.grey[900],
-          title: const Text('Change site/host'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            keyboardType: TextInputType.url,
-            textInputAction: TextInputAction.done,
-            decoration: InputDecoration(
-              focusedBorder: UnderlineInputBorder(
-                borderSide: BorderSide(
-                  color: Theme.of(dialogContext).colorScheme.primary,
-                  width: 2,
-                ),
-              ),
-              enabledBorder: const UnderlineInputBorder(
-                borderSide: BorderSide(color: Colors.white54),
-              ),
-            ),
-            onSubmitted: (val) => Navigator.of(dialogContext).pop(val),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
+      builder: (BuildContext dialogContext) => _HostInputDialog(initialHost: authProvider.host),
     );
 
     if (newHostInput != null && context.mounted) {
@@ -104,14 +69,13 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  // Method to display confirmation dialog
   Future<void> _showUnlinkDialog(BuildContext context, AuthProvider authProvider) async {
     final bool isGuest = authProvider.isGuestMode;
 
     return showDialog<void>(
       context: context,
-      barrierDismissible: false, // User must tap a button
-      builder: (BuildContext context) {
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           backgroundColor: Colors.grey[900],
           title: Text(isGuest ? 'Exit Guest Mode?' : 'Unlink Account?'),
@@ -131,15 +95,17 @@ class SettingsPage extends StatelessWidget {
             TextButton(
               child: const Text('Cancel'),
               onPressed: () {
-                Navigator.of(context).pop();
+                Navigator.of(dialogContext).pop();
               },
             ),
             TextButton(
               style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
               child: Text(isGuest ? 'Exit' : 'Unlink'),
-              onPressed: () {
-                authProvider.logout();
-                Navigator.of(context).pop();
+              onPressed: () async {
+                await authProvider.logout();
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                }
               },
             ),
           ],
@@ -180,7 +146,6 @@ class SettingsPage extends StatelessWidget {
       ),
       body: ListView(
         children: [
-          // --- GENERAL SECTION ---
           _buildSectionHeader(context, "GENERAL"),
 
           ListTile(
@@ -198,7 +163,6 @@ class SettingsPage extends StatelessWidget {
 
           const Divider(color: Colors.white12, height: 28),
 
-          // --- BLACKLIST SECTION (Wolf Stash style with Sker dark UI) ---
           _buildSectionHeader(context, "BLACKLIST & FILTERING"),
 
           ListTile(
@@ -290,7 +254,6 @@ class SettingsPage extends StatelessWidget {
 
           const Divider(color: Colors.white12, height: 28),
 
-          // --- ACCOUNT SECTION ---
           _buildSectionHeader(context, "ACCOUNT"),
 
           ListTile(
@@ -336,6 +299,62 @@ class SettingsPage extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _HostInputDialog extends StatefulWidget {
+  final String initialHost;
+
+  const _HostInputDialog({required this.initialHost});
+
+  @override
+  State<_HostInputDialog> createState() => _HostInputDialogState();
+}
+
+class _HostInputDialogState extends State<_HostInputDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialHost);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.grey[900],
+      title: const Text('Change site/host'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(
+          focusedBorder: UnderlineInputBorder(
+            borderSide: BorderSide(
+              color: Theme.of(context).colorScheme.primary,
+              width: 2,
+            ),
+          ),
+          enabledBorder: const UnderlineInputBorder(
+            borderSide: BorderSide(color: Colors.white54),
+          ),
+        ),
+        onSubmitted: (val) => Navigator.of(context).pop(val),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text),
+          child: const Text('OK'),
+        ),
+      ],
     );
   }
 }

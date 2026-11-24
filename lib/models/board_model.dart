@@ -47,7 +47,7 @@ class Board {
 
   factory Board.fromJson(Map<String, dynamic> json) {
     final rawPostIds = json['postIds'] as List<dynamic>? ?? [];
-    final postIds = rawPostIds.map((e) => (e as num).toInt()).toList();
+    final postIds = rawPostIds.whereType<num>().map((e) => e.toInt()).toList();
 
     final rawPosts = json['posts'] as List<dynamic>? ?? [];
     final posts = rawPosts

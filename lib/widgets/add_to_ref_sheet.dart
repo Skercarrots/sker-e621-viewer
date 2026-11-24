@@ -56,14 +56,16 @@ class _AddToRefSheetState extends State<AddToRefSheet> {
             ),
             onSubmitted: (value) async {
               if (value.trim().isNotEmpty) {
+                final navigator = Navigator.of(context);
+                final messenger = ScaffoldMessenger.of(context);
                 final newBoard = await provider.createRefBoard(
                   value.trim(),
                   initialPosts: [widget.post],
                 );
                 if (dialogContext.mounted) Navigator.pop(dialogContext);
                 if (context.mounted) {
-                  Navigator.pop(context);
-                  _showSavedSnackbar(context, newBoard);
+                  navigator.pop();
+                  _showSavedSnackbar(messenger, navigator, newBoard);
                 }
               }
             },
@@ -81,14 +83,16 @@ class _AddToRefSheetState extends State<AddToRefSheet> {
               onPressed: () async {
                 final name = _nameController.text.trim();
                 if (name.isNotEmpty) {
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
                   final newBoard = await provider.createRefBoard(
                     name,
                     initialPosts: [widget.post],
                   );
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
                   if (context.mounted) {
-                    Navigator.pop(context);
-                    _showSavedSnackbar(context, newBoard);
+                    navigator.pop();
+                    _showSavedSnackbar(messenger, navigator, newBoard);
                   }
                 }
               },
@@ -100,16 +104,19 @@ class _AddToRefSheetState extends State<AddToRefSheet> {
     );
   }
 
-  void _showSavedSnackbar(BuildContext context, RefBoard board) {
-    ScaffoldMessenger.of(context).showSnackBar(
+  void _showSavedSnackbar(
+    ScaffoldMessengerState messenger,
+    NavigatorState navigator,
+    RefBoard board,
+  ) {
+    messenger.showSnackBar(
       SnackBar(
         content: Text('Pinned art #${widget.post.id} to "${board.name}"!'),
         action: SnackBarAction(
           label: 'OPEN CANVAS',
           textColor: Colors.cyanAccent,
           onPressed: () {
-            Navigator.push(
-              context,
+            navigator.push(
               MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: board.id)),
             );
           },
@@ -149,11 +156,13 @@ class _AddToRefSheetState extends State<AddToRefSheet> {
                     width: 48,
                     height: 48,
                     color: Colors.grey[850],
-                    child: CachedNetworkImage(
-                      imageUrl: widget.post.previewUrl ?? '',
-                      fit: BoxFit.cover,
-                      errorWidget: (context, url, error) => const Icon(Icons.broken_image),
-                    ),
+                    child: (widget.post.previewUrl != null && widget.post.previewUrl!.isNotEmpty)
+                        ? CachedNetworkImage(
+                            imageUrl: widget.post.previewUrl!,
+                            fit: BoxFit.cover,
+                            errorWidget: (context, url, error) => const Icon(Icons.broken_image),
+                          )
+                        : const Icon(Icons.image_not_supported, color: Colors.grey),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -230,8 +239,13 @@ class _AddToRefSheetState extends State<AddToRefSheet> {
                           width: 44,
                           height: 44,
                           color: Colors.grey[800],
-                          child: b.coverUrl != null
-                              ? CachedNetworkImage(imageUrl: b.coverUrl!, fit: BoxFit.cover)
+                          child: (b.coverUrl != null && b.coverUrl!.isNotEmpty)
+                              ? CachedNetworkImage(
+                                  imageUrl: b.coverUrl!,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (context, url, error) =>
+                                      const Icon(Icons.draw_outlined, color: Colors.cyanAccent),
+                                )
                               : const Icon(Icons.draw_outlined, color: Colors.cyanAccent),
                         ),
                       ),
@@ -257,10 +271,12 @@ class _AddToRefSheetState extends State<AddToRefSheet> {
                                 minimumSize: Size.zero,
                               ),
                               onPressed: () async {
+                                final navigator = Navigator.of(context);
+                                final messenger = ScaffoldMessenger.of(context);
                                 await refProvider.addPostToRefBoard(b.id, widget.post);
                                 if (context.mounted) {
-                                  Navigator.pop(context);
-                                  _showSavedSnackbar(context, b);
+                                  navigator.pop();
+                                  _showSavedSnackbar(messenger, navigator, b);
                                 }
                               },
                               child: const Text('Add'),

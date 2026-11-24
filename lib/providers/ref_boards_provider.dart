@@ -13,6 +13,7 @@ class RefBoardsProvider with ChangeNotifier {
   List<RefBoard> _refBoards = [];
   bool _isLoading = false;
   bool _isInitialized = false;
+  final Set<String> _migratedUsers = {};
 
   RefBoardsProvider({FlutterSecureStorage? storage})
       : _storage = storage ?? const FlutterSecureStorage();
@@ -43,10 +44,14 @@ class RefBoardsProvider with ChangeNotifier {
       await loadRefBoards();
     }
 
-    // If logging into an existing user account, merge any legacy user boards if present
-    if (username != null && username.isNotEmpty && !isGuest) {
+    if (username != null &&
+        username.isNotEmpty &&
+        !isGuest &&
+        !_migratedUsers.contains(username)) {
+      _migratedUsers.add(username);
+      final legacyKey = 'ref_boards_user_$username';
       try {
-        final legacyUserData = await _storage.read(key: 'ref_boards_user_$username');
+        final legacyUserData = await _storage.read(key: legacyKey);
         if (legacyUserData != null && legacyUserData.isNotEmpty) {
           final List<dynamic> decoded = jsonDecode(legacyUserData);
           final userBoards = decoded
@@ -66,6 +71,11 @@ class RefBoardsProvider with ChangeNotifier {
             _refBoards.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
             await _persistBoards();
             notifyListeners();
+          }
+          try {
+            await _storage.delete(key: legacyKey);
+          } catch (_) {
+            await _storage.write(key: legacyKey, value: '');
           }
         }
       } catch (e) {
@@ -191,11 +201,10 @@ class RefBoardsProvider with ChangeNotifier {
 
     final board = _refBoards[index];
 
-    // Calculate smart placement position (to the right of the rightmost item, or below)
     double targetX = 50.0;
     double targetY = 50.0;
     if (board.items.isNotEmpty) {
-      double maxX = 0;
+      double maxX = double.negativeInfinity;
       for (final item in board.items) {
         if (item.x + item.width > maxX) {
           maxX = item.x + item.width;
@@ -233,10 +242,9 @@ class RefBoardsProvider with ChangeNotifier {
 
     if (postsToAdd.isEmpty) return 0;
 
-    // Start placing after the rightmost edge of existing items
     double startX = 50.0;
     if (refBoard.items.isNotEmpty) {
-      double maxX = 0;
+      double maxX = double.negativeInfinity;
       for (final item in refBoard.items) {
         if (item.x + item.width > maxX) {
           maxX = item.x + item.width;
@@ -273,7 +281,8 @@ class RefBoardsProvider with ChangeNotifier {
     return newItems.length;
   }
 
-  /// Updates a specific item's coordinates, size, or transformations
+  /// Updates a specific item's coordinates, size, or transformations.
+  /// Pass [persist] = `false` during continuous gestures and call [saveChanges] on end.
   Future<void> updateItemTransform(
     String boardId,
     String itemId, {
@@ -286,6 +295,7 @@ class RefBoardsProvider with ChangeNotifier {
     bool? isFlippedV,
     bool? isGrayscale,
     int? zIndex,
+    bool persist = true,
   }) async {
     final bIndex = _refBoards.indexWhere((b) => b.id == boardId);
     if (bIndex == -1) return;
@@ -315,35 +325,38 @@ class RefBoardsProvider with ChangeNotifier {
       updatedAt: DateTime.now(),
     );
 
-    await _persistBoards();
+    if (persist) {
+      await _persistBoards();
+    }
     notifyListeners();
   }
 
-  /// Toggles horizontal flip (mirroring) on an item
+  Future<void> saveChanges() => _persistBoards();
+
   Future<void> toggleItemFlipH(String boardId, String itemId) async {
     final board = getRefBoardById(boardId);
     if (board == null) return;
-    final item = board.items.firstWhere((i) => i.id == itemId, orElse: () => board.items.first);
-    await updateItemTransform(boardId, itemId, isFlippedH: !item.isFlippedH);
+    final idx = board.items.indexWhere((i) => i.id == itemId);
+    if (idx == -1) return;
+    await updateItemTransform(boardId, itemId, isFlippedH: !board.items[idx].isFlippedH);
   }
 
-  /// Toggles vertical flip on an item
   Future<void> toggleItemFlipV(String boardId, String itemId) async {
     final board = getRefBoardById(boardId);
     if (board == null) return;
-    final item = board.items.firstWhere((i) => i.id == itemId, orElse: () => board.items.first);
-    await updateItemTransform(boardId, itemId, isFlippedV: !item.isFlippedV);
+    final idx = board.items.indexWhere((i) => i.id == itemId);
+    if (idx == -1) return;
+    await updateItemTransform(boardId, itemId, isFlippedV: !board.items[idx].isFlippedV);
   }
 
-  /// Toggles grayscale filter on an item
   Future<void> toggleItemGrayscale(String boardId, String itemId) async {
     final board = getRefBoardById(boardId);
     if (board == null) return;
-    final item = board.items.firstWhere((i) => i.id == itemId, orElse: () => board.items.first);
-    await updateItemTransform(boardId, itemId, isGrayscale: !item.isGrayscale);
+    final idx = board.items.indexWhere((i) => i.id == itemId);
+    if (idx == -1) return;
+    await updateItemTransform(boardId, itemId, isGrayscale: !board.items[idx].isGrayscale);
   }
 
-  /// Brings an item to the front of all items
   Future<void> bringToFront(String boardId, String itemId) async {
     final board = getRefBoardById(boardId);
     if (board == null || board.items.isEmpty) return;
@@ -352,7 +365,6 @@ class RefBoardsProvider with ChangeNotifier {
     await updateItemTransform(boardId, itemId, zIndex: maxZ + 1);
   }
 
-  /// Sends an item to the back
   Future<void> sendToBack(String boardId, String itemId) async {
     final board = getRefBoardById(boardId);
     if (board == null || board.items.isEmpty) return;
@@ -361,7 +373,6 @@ class RefBoardsProvider with ChangeNotifier {
     await updateItemTransform(boardId, itemId, zIndex: minZ - 1);
   }
 
-  /// Removes an item from the canvas
   Future<bool> removeItem(String boardId, String itemId) async {
     final bIndex = _refBoards.indexWhere((b) => b.id == boardId);
     if (bIndex == -1) return false;
@@ -380,7 +391,6 @@ class RefBoardsProvider with ChangeNotifier {
     return true;
   }
 
-  /// Toggles the lock status of the canvas items
   Future<void> toggleBoardLock(String boardId) async {
     final bIndex = _refBoards.indexWhere((b) => b.id == boardId);
     if (bIndex == -1) return;
@@ -395,7 +405,7 @@ class RefBoardsProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Auto-arranges all items on the canvas in a neat grid (smart grid layout)
+  /// Auto-arranges all items on the canvas in a neat grid without overlapping.
   Future<void> autoArrangeBoard(String boardId, {int columns = 3, double spacing = 30.0}) async {
     final bIndex = _refBoards.indexWhere((b) => b.id == boardId);
     if (bIndex == -1) return;
@@ -406,20 +416,26 @@ class RefBoardsProvider with ChangeNotifier {
     final List<RefBoardItem> arranged = [];
     final cols = math.max(1, columns);
 
-    for (int i = 0; i < board.items.length; i++) {
-      final item = board.items[i];
-      final col = i % cols;
-      final row = i ~/ cols;
+    double currentY = 50.0;
+    for (int rowStart = 0; rowStart < board.items.length; rowStart += cols) {
+      double currentX = 50.0;
+      double rowMaxHeight = 0.0;
+      final rowEnd = math.min(rowStart + cols, board.items.length);
 
-      final x = 50.0 + col * (item.width + spacing);
-      final y = 50.0 + row * (item.height + spacing);
-
-      arranged.add(item.copyWith(
-        x: x,
-        y: y,
-        rotation: 0.0,
-        zIndex: i,
-      ));
+      for (int i = rowStart; i < rowEnd; i++) {
+        final item = board.items[i];
+        arranged.add(item.copyWith(
+          x: currentX,
+          y: currentY,
+          rotation: 0.0,
+          zIndex: i,
+        ));
+        currentX += item.width + spacing;
+        if (item.height > rowMaxHeight) {
+          rowMaxHeight = item.height;
+        }
+      }
+      currentY += rowMaxHeight + spacing;
     }
 
     _refBoards[bIndex] = board.copyWith(
@@ -431,7 +447,6 @@ class RefBoardsProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  /// Renames an existing Ref Board
   Future<bool> renameRefBoard(String boardId, String newName) async {
     final bIndex = _refBoards.indexWhere((b) => b.id == boardId);
     if (bIndex == -1) return false;
@@ -449,7 +464,6 @@ class RefBoardsProvider with ChangeNotifier {
     return true;
   }
 
-  /// Deletes a Ref Board
   Future<bool> deleteRefBoard(String boardId) async {
     final initialLen = _refBoards.length;
     _refBoards.removeWhere((b) => b.id == boardId);
@@ -461,16 +475,21 @@ class RefBoardsProvider with ChangeNotifier {
     return false;
   }
 
-  /// Duplicates a Ref Board
   Future<RefBoard?> duplicateRefBoard(String boardId) async {
     final original = getRefBoardById(boardId);
     if (original == null) return null;
 
     final now = DateTime.now();
-    final newId = '${now.microsecondsSinceEpoch}_${math.Random().nextInt(99999)}';
-    final duplicatedItems = original.items
-        .map((i) => i.copyWith(id: 'item_${now.microsecondsSinceEpoch}_${math.Random().nextInt(9999)}'))
-        .toList();
+    final rng = math.Random();
+    final newId = '${now.microsecondsSinceEpoch}_${rng.nextInt(99999)}';
+    final duplicatedItems = <RefBoardItem>[];
+    for (int i = 0; i < original.items.length; i++) {
+      duplicatedItems.add(
+        original.items[i].copyWith(
+          id: 'item_${now.microsecondsSinceEpoch}_${i}_${rng.nextInt(9999)}',
+        ),
+      );
+    }
 
     final duplicate = RefBoard(
       id: newId,
@@ -524,7 +543,6 @@ class RefBoardsProvider with ChangeNotifier {
     return imported;
   }
 
-  /// Look up a Ref Board by ID
   RefBoard? getRefBoardById(String boardId) {
     try {
       return _refBoards.firstWhere((b) => b.id == boardId);

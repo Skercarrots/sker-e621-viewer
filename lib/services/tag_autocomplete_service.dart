@@ -207,11 +207,19 @@ class TagAutocompleteService {
   ];
 
   final http.Client _client;
+  final bool _ownsClient;
   final String? host;
   final Map<String, List<TagSuggestion>> _cache = {};
 
   TagAutocompleteService({http.Client? client, this.host})
-      : _client = client ?? http.Client();
+      : _client = client ?? http.Client(),
+        _ownsClient = client == null;
+
+  void dispose() {
+    if (_ownsClient) {
+      _client.close();
+    }
+  }
 
   /// Fetches suggestions for the active tag [query] (without leading `-` or `~`).
   Future<List<TagSuggestion>> fetchSuggestions(
@@ -246,7 +254,7 @@ class TagAutocompleteService {
     }
 
     final requestHeaders = headers ?? const {'User-Agent': 'SkerE621/1.0 (by anonymous on e621)'};
-    List<TagSuggestion> apiSuggestions = const [];
+    List<TagSuggestion> apiSuggestions = [];
 
     try {
       if (normalized.length >= 3) {
@@ -268,11 +276,12 @@ class TagAutocompleteService {
         }
       } else {
         // For 1-2 character prefixes, /tags/autocomplete.json returns 400, so use /tags.json.
+        final fetchLimit = limit < 20 ? 20 : limit;
         final uri = Uri.https(activeHost, '/tags.json', {
           'search[name_matches]': '$normalized*',
           'search[order]': 'count',
           'search[hide_empty]': 'true',
-          'limit': '$limit',
+          'limit': '$fetchLimit',
         });
         final response = await _client.get(uri, headers: requestHeaders);
         if (response.statusCode == 200) {

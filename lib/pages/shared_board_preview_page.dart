@@ -1,9 +1,11 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/post_model.dart';
 import '../models/ref_board_model.dart';
 import '../providers/auth_provider.dart';
+import '../providers/blacklist_provider.dart';
 import '../providers/boards_provider.dart';
 import '../providers/ref_boards_provider.dart';
 import '../services/board_share_service.dart';
@@ -58,6 +60,18 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
     super.dispose();
   }
 
+  static Color _parseHexColor(String hex) {
+    final cleaned = hex.trim().replaceFirst('#', '');
+    if (cleaned.length == 6) {
+      final parsed = int.tryParse('FF$cleaned', radix: 16);
+      if (parsed != null) return Color(parsed);
+    } else if (cleaned.length == 8) {
+      final parsed = int.tryParse(cleaned, radix: 16);
+      if (parsed != null) return Color(parsed);
+    }
+    return const Color(0xFF191919);
+  }
+
   Future<void> _hydrateFromApi() async {
     setState(() {
       _isLoading = true;
@@ -65,6 +79,7 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
     });
 
     final auth = Provider.of<AuthProvider>(context, listen: false);
+    final blacklist = Provider.of<BlacklistProvider>(context, listen: false);
     final api = E621CollectionsApi(auth.authHeaders, host: auth.host);
     final ids = widget.payload.allReferencedPostIds;
 
@@ -87,13 +102,20 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
       }
 
       final postMap = await api.getPostsByIds(ids);
-      final orderedPosts = ids.map((id) => postMap[id]).whereType<E621Post>().toList();
+      final orderedPosts = blacklist.filterPosts(
+        ids.map((id) => postMap[id]).whereType<E621Post>().toList(),
+        isPool: false,
+      );
+      final allowedIds = orderedPosts.map((p) => p.id).toSet();
 
       final builtRefItems = <RefBoardItem>[];
       if (widget.payload.isRefCanvas) {
         for (int i = 0; i < widget.payload.refItems.length; i++) {
           final raw = widget.payload.refItems[i];
           final post = raw.postId != null ? postMap[raw.postId!] : null;
+          if (post != null && !allowedIds.contains(post.id)) {
+            continue;
+          }
           builtRefItems.add(raw.toRefBoardItem(i, hydratedPost: post));
         }
       }
@@ -117,10 +139,11 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
 
   Future<void> _handleSaveAsBoard() async {
     final boardsProvider = Provider.of<BoardsProvider>(context, listen: false);
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
 
     if (_savedBoardId != null) {
-      Navigator.pushReplacement(
-        context,
+      navigator.pushReplacement(
         MaterialPageRoute(builder: (_) => BoardDetailPage(boardId: _savedBoardId!)),
       );
       return;
@@ -128,7 +151,7 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
 
     final saved = await boardsProvider.importSharedBoard(
       name: widget.payload.name,
-      postIds: widget.payload.allReferencedPostIds,
+      postIds: _hydratedPosts.map((p) => p.id).toList(),
       posts: _hydratedPosts,
     );
 
@@ -137,14 +160,13 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
       _savedBoardId = saved.id;
     });
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       SnackBar(
         content: Text('Saved "${saved.name}" to your Saved Boards!'),
         action: SnackBarAction(
           label: 'OPEN',
           onPressed: () {
-            Navigator.pushReplacement(
-              context,
+            navigator.pushReplacement(
               MaterialPageRoute(builder: (_) => BoardDetailPage(boardId: saved.id)),
             );
           },
@@ -327,7 +349,7 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
     return Stack(
       children: [
         Container(
-          color: const Color(0xFF191919),
+          color: _parseHexColor(widget.payload.backgroundColorHex),
           child: InteractiveViewer(
             transformationController: _canvasController,
             boundaryMargin: const EdgeInsets.all(5000.0),
@@ -427,7 +449,9 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
                     builder: (_) => PostDetailPage(
                       post: item.post!,
                       posts: _hydratedPosts.isNotEmpty ? _hydratedPosts : [item.post!],
-                      initialIndex: _hydratedPosts.indexOf(item.post!).clamp(0, _hydratedPosts.length),
+                      initialIndex: _hydratedPosts.isNotEmpty
+                          ? _hydratedPosts.indexOf(item.post!).clamp(0, math.max(0, _hydratedPosts.length - 1))
+                          : 0,
                       heroTagPrefix: 'shared-ref-${item.id}',
                     ),
                   ),
@@ -525,12 +549,17 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
                       tag: postHeroTag('shared-board-preview', index, post),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8.0),
-                        child: CachedNetworkImage(
-                          imageUrl: post.previewUrl ?? '',
-                          fit: BoxFit.cover,
-                          placeholder: (context, _) => Container(color: Colors.grey[850]),
-                          errorWidget: (context, _, _) => const Icon(Icons.broken_image),
-                        ),
+                        child: (post.previewUrl != null && post.previewUrl!.isNotEmpty)
+                            ? CachedNetworkImage(
+                                imageUrl: post.previewUrl!,
+                                fit: BoxFit.cover,
+                                placeholder: (context, _) => Container(color: Colors.grey[850]),
+                                errorWidget: (context, _, _) => const Icon(Icons.broken_image),
+                              )
+                            : Container(
+                                color: Colors.grey[850],
+                                child: const Icon(Icons.image_not_supported, color: Colors.grey),
+                              ),
                       ),
                     ),
                     if (isVideo)

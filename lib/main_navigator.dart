@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/auth_provider.dart';
 import 'pages/account_page.dart';
 import 'pages/gallery_page.dart';
 import 'pages/collections_page.dart';
 import 'pages/shared_board_preview_page.dart';
-import '../providers/follows_provider.dart';
-import '../services/board_share_service.dart';
+import 'providers/follows_provider.dart';
+import 'services/board_share_service.dart';
 
 class MainNavigator extends StatefulWidget {
   const MainNavigator({super.key});
@@ -60,19 +59,23 @@ class _MainNavigatorState extends State<MainNavigator> with WidgetsBindingObserv
 
     _lastHandledRoute = rawRoute;
     if (mounted) {
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => SharedBoardPreviewPage(payload: payload),
-        ),
-      );
+      Navigator.of(context)
+          .push(
+            MaterialPageRoute(
+              builder: (_) => SharedBoardPreviewPage(payload: payload),
+            ),
+          )
+          .then((_) {
+        if (mounted && _lastHandledRoute == rawRoute) {
+          _lastHandledRoute = null;
+        }
+      });
     }
     return true;
   }
 
   @override
   Widget build(BuildContext context) {
-    // We listen to auth provider just to rebuild the nav bar icons if needed (optional refinement)
-    Provider.of<AuthProvider>(context);
     final follows = Provider.of<FollowsProvider>(context);
     final totalNew = follows.totalNewCount;
     final safeIndex = _currentIndex >= _pages.length ? _pages.length - 1 : _currentIndex;

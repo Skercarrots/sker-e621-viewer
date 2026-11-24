@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart'; // Import Provider
-import 'providers/auth_provider.dart'; // Import the AuthProvider
-import 'providers/boards_provider.dart'; // Import the BoardsProvider
-import 'providers/follows_provider.dart'; // Import the FollowsProvider
-import 'providers/ref_boards_provider.dart'; // Import the RefBoardsProvider
+import 'package:provider/provider.dart';
+import 'providers/auth_provider.dart';
+import 'providers/boards_provider.dart';
+import 'providers/follows_provider.dart';
+import 'providers/ref_boards_provider.dart';
 import 'providers/blacklist_provider.dart';
-import 'main_navigator.dart'; // We will create this shortly
+import 'main_navigator.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,7 +17,6 @@ class SkerE621App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Provide AuthProvider, BoardsProvider, FollowsProvider, RefBoardsProvider, and BlacklistProvider
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<BlacklistProvider>(
@@ -57,7 +56,6 @@ class SkerE621App extends StatelessWidget {
         theme: ThemeData(
           brightness: Brightness.dark,
           useMaterial3: true,
-          // Clean modern dark theme color scheme
           colorScheme: ColorScheme.dark(
              primary: Colors.blueAccent,
              secondary: Colors.blueGrey[700]!,
@@ -71,7 +69,6 @@ class SkerE621App extends StatelessWidget {
             unselectedItemColor: Colors.grey,
           )
         ),
-        // We point home to a new MainNavigator instead of directly to the gallery
         home: const MainNavigator(),
       ),
     );

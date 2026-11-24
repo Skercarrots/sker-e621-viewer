@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -86,6 +85,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
   Timer? _pageSettleTimer;
   bool _isFav = false;
   bool _isLoadingMore = false;
+  final Set<int> _checkedFavoriteIds = {};
 
   E621Post get currentPost => _posts[_currentIndex];
 
@@ -105,10 +105,14 @@ class _PostDetailPageState extends State<PostDetailPage> {
     }
     _pageController = PageController(initialPage: _currentIndex);
 
-    _updateFavoriteStatusForCurrentPost();
+    if (_posts.isNotEmpty) {
+      _updateFavoriteStatusForCurrentPost();
+    }
 
     // MediaQuery isn't safe to read in initState, so wait for the first frame.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _precacheNeighbors(_currentIndex));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_posts.isNotEmpty) _precacheNeighbors(_currentIndex);
+    });
   }
 
   @override
@@ -203,6 +207,8 @@ class _PostDetailPageState extends State<PostDetailPage> {
   }
 
   Future<void> _checkIfFavorite(E621Post post) async {
+    if (_checkedFavoriteIds.contains(post.id)) return;
+    _checkedFavoriteIds.add(post.id);
     final auth = Provider.of<AuthProvider>(context, listen: false);
     if (auth.isGuestMode) {
       final favs = await auth.getGuestFavorites();
@@ -219,7 +225,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
         },
       );
       try {
-        final response = await http.get(uri, headers: auth.authHeaders);
+        final response = await auth.httpClient.get(uri, headers: auth.authHeaders);
         if (response.statusCode == 200) {
           final dynamic data = jsonDecode(response.body);
           final List<dynamic> posts = (data is List)
@@ -279,6 +285,13 @@ class _PostDetailPageState extends State<PostDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_posts.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Post')),
+        body: const Center(child: Text('No post available.')),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: Column(
@@ -332,7 +345,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
               DownloadService.downloadWithFeedback(
                 context,
                 currentPost,
-                authHeaders: auth.authHeaders,
+                authHeaders: auth.mediaHeaders,
               );
             },
           ),
@@ -357,7 +370,7 @@ class _PostDetailPageState extends State<PostDetailPage> {
           }
           final post = _posts[index];
           return _PostContentView(
-            key: ValueKey(post.id),
+            key: ValueKey('${post.id}-$index'),
             post: post,
             isActive: index == _currentIndex,
             heroTag: widget.heroTagPrefix != null ? postHeroTag(widget.heroTagPrefix!, index, post) : null,
@@ -455,7 +468,7 @@ class _PostContentViewState extends State<_PostContentView> with WidgetsBindingO
       _routeAnimation?.addStatusListener(_onRouteAnimationStatusChanged);
     }
 
-    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final tickerEnabled = TickerMode.of(context);
     final animStatus = _routeAnimation?.status;
 
     if (!tickerEnabled ||
@@ -488,7 +501,7 @@ class _PostContentViewState extends State<_PostContentView> with WidgetsBindingO
       if (isVideo &&
           widget.isActive &&
           _settleActivationTimer == null &&
-          TickerMode.valuesOf(context).enabled &&
+          TickerMode.of(context) &&
           _videoController == null &&
           !_videoError) {
         _initVideo();
@@ -505,7 +518,7 @@ class _PostContentViewState extends State<_PostContentView> with WidgetsBindingO
         state == AppLifecycleState.hidden) {
       controller.pause();
     } else if (state == AppLifecycleState.resumed) {
-      if (mounted && isVideo && widget.isActive && TickerMode.valuesOf(context).enabled) {
+      if (mounted && isVideo && widget.isActive && TickerMode.of(context)) {
         if (controller.value.hasError) {
           _retryVideo();
         } else if (!_userPaused) {
@@ -516,7 +529,7 @@ class _PostContentViewState extends State<_PostContentView> with WidgetsBindingO
   }
 
   bool get _canPlayInCurrentRoute {
-    if (!mounted || !TickerMode.valuesOf(context).enabled) return false;
+    if (!mounted || !TickerMode.of(context)) return false;
     final status = _routeAnimation?.status;
     return status == null || status == AnimationStatus.completed;
   }
@@ -636,7 +649,7 @@ class _PostContentViewState extends State<_PostContentView> with WidgetsBindingO
 
     Map<String, String> headers = const {'User-Agent': 'SkerE621/1.0 (by anonymous on e621)'};
     try {
-      headers = Provider.of<AuthProvider>(context, listen: false).authHeaders;
+      headers = Provider.of<AuthProvider>(context, listen: false).mediaHeaders;
     } catch (_) {}
 
     final controller = VideoPlayerController.networkUrl(

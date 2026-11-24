@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:skerdev_e621/models/board_model.dart';
@@ -196,6 +198,16 @@ void main() {
       expect(importedRef.items.first.isFlippedH, isTrue);
       expect(importedRef.items.first.isGrayscale, isTrue);
       expect(importedRef.items.first.post?.id, 4149486);
+    });
+
+    test('Rejects oversized decompressed share payloads (zip-bomb protection)', () {
+      // > 1 MB of zeros compresses to a tiny zlib payload
+      final hugeZeros = List<int>.filled(2 * 1024 * 1024, 0x20);
+      final compressed = zlib.encode(hugeZeros);
+      final b64 = base64Url.encode(compressed).replaceAll('=', '');
+      final maliciousCode = '${BoardShareService.boardPrefix}$b64';
+
+      expect(BoardShareService.tryDecodeAny(maliciousCode), isNull);
     });
   });
 }

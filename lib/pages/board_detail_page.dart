@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/board_model.dart';
 import '../providers/auth_provider.dart';
+import '../providers/blacklist_provider.dart';
 import '../providers/boards_provider.dart';
 import '../providers/ref_boards_provider.dart';
 import '../widgets/board_share_sheets.dart';
@@ -15,42 +16,12 @@ class BoardDetailPage extends StatelessWidget {
   const BoardDetailPage({super.key, required this.boardId});
 
   void _showRenameDialog(BuildContext context, BoardsProvider boardsProvider, Board board) {
-    final controller = TextEditingController(text: board.name);
     showDialog<void>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          backgroundColor: Colors.grey[850],
-          title: const Text('Rename Board'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: const InputDecoration(
-              labelText: 'Board Name',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final newName = controller.text.trim();
-                if (newName.isNotEmpty) {
-                  await boardsProvider.renameBoard(board.id, newName);
-                  if (dialogContext.mounted) {
-                    Navigator.of(dialogContext).pop();
-                  }
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
+      builder: (dialogContext) => _RenameBoardDialog(
+        initialName: board.name,
+        onSave: (newName) => boardsProvider.renameBoard(board.id, newName),
+      ),
     );
   }
 
@@ -89,7 +60,8 @@ class BoardDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final boardsProvider = Provider.of<BoardsProvider>(context);
-    final auth = Provider.of<AuthProvider>(context, listen: false);
+    final auth = Provider.of<AuthProvider>(context);
+    final blacklist = Provider.of<BlacklistProvider>(context);
     final board = boardsProvider.getBoardById(boardId);
 
     if (board == null) {
@@ -98,6 +70,11 @@ class BoardDetailPage extends StatelessWidget {
         body: const Center(child: Text('Board not found.')),
       );
     }
+
+    final safePosts = auth.isSafeMode
+        ? board.posts.where((p) => p.rating.toLowerCase() == 's').toList()
+        : board.posts;
+    final visiblePosts = blacklist.filterPosts(safePosts, isPool: false);
 
     return Scaffold(
       appBar: AppBar(
@@ -204,27 +181,37 @@ class BoardDetailPage extends StatelessWidget {
           ),
         ],
       ),
-      body: board.posts.isEmpty
+      body: visiblePosts.isEmpty
           ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.collections_bookmark_outlined,
-                    size: 56,
-                    color: Colors.grey[600],
-                  ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'Empty board',
-                    style: TextStyle(fontSize: 16, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Save posts from the gallery to add them here.',
-                    style: TextStyle(color: Colors.grey[500], fontSize: 13),
-                  ),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      board.posts.isNotEmpty
+                          ? Icons.visibility_off_outlined
+                          : Icons.collections_bookmark_outlined,
+                      size: 56,
+                      color: Colors.grey[600],
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      board.posts.isNotEmpty
+                          ? 'All ${board.posts.length} posts are hidden'
+                          : 'Empty board',
+                      style: const TextStyle(fontSize: 16, color: Colors.white70),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      board.posts.isNotEmpty
+                          ? 'Hidden by Safe Mode (${auth.host}) or your blacklist.'
+                          : 'Save posts from the gallery to add them here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey[500], fontSize: 13),
+                    ),
+                  ],
+                ),
               ),
             )
           : GridView.builder(
@@ -235,9 +222,9 @@ class BoardDetailPage extends StatelessWidget {
                 mainAxisSpacing: 8.0,
                 childAspectRatio: 0.7,
               ),
-              itemCount: board.posts.length,
+              itemCount: visiblePosts.length,
               itemBuilder: (context, index) {
-                final post = board.posts[index];
+                final post = visiblePosts[index];
                 final isVideo = post.extension == 'webm' || post.extension == 'mp4';
 
                 return GestureDetector(
@@ -247,7 +234,7 @@ class BoardDetailPage extends StatelessWidget {
                       MaterialPageRoute(
                         builder: (context) => PostDetailPage(
                           post: post,
-                          posts: board.posts,
+                          posts: visiblePosts,
                           initialIndex: index,
                           heroTagPrefix: 'board-${board.id}',
                         ),
@@ -286,7 +273,7 @@ class BoardDetailPage extends StatelessWidget {
                                     MaterialPageRoute(
                                       builder: (context) => PostDetailPage(
                                         post: post,
-                                        posts: board.posts,
+                                        posts: visiblePosts,
                                         initialIndex: index,
                                         heroTagPrefix: 'board-${board.id}',
                                       ),
@@ -307,12 +294,17 @@ class BoardDetailPage extends StatelessWidget {
                         tag: postHeroTag('board-${board.id}', index, post),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(8.0),
-                          child: CachedNetworkImage(
-                            imageUrl: post.previewUrl ?? '',
-                            fit: BoxFit.cover,
-                            placeholder: (context, url) => Container(color: Colors.grey[850]),
-                            errorWidget: (context, url, error) => const Icon(Icons.broken_image),
-                          ),
+                          child: (post.previewUrl != null && post.previewUrl!.isNotEmpty)
+                              ? CachedNetworkImage(
+                                  imageUrl: post.previewUrl!,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(color: Colors.grey[850]),
+                                  errorWidget: (context, url, error) => const Icon(Icons.broken_image),
+                                )
+                              : Container(
+                                  color: Colors.grey[850],
+                                  child: const Icon(Icons.image_not_supported, color: Colors.grey),
+                                ),
                         ),
                       ),
                       if (isVideo)
@@ -337,6 +329,68 @@ class BoardDetailPage extends StatelessWidget {
                 );
               },
             ),
+    );
+  }
+}
+
+class _RenameBoardDialog extends StatefulWidget {
+  final String initialName;
+  final Future<bool> Function(String) onSave;
+
+  const _RenameBoardDialog({
+    required this.initialName,
+    required this.onSave,
+  });
+
+  @override
+  State<_RenameBoardDialog> createState() => _RenameBoardDialogState();
+}
+
+class _RenameBoardDialogState extends State<_RenameBoardDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initialName);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final newName = _controller.text.trim();
+    if (newName.isNotEmpty) {
+      await widget.onSave(newName);
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: Colors.grey[850],
+      title: const Text('Rename Board'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(
+          labelText: 'Board Name',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

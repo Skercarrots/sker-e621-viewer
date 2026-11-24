@@ -706,4 +706,37 @@ void main() {
     ]);
     expect(fakePlatform.activeTextureIds.length, 1);
   });
+
+  test('E621Post.fromJson reconstructs full video sample URLs including md5 sub-path when URLs are nulled', () {
+    const md5 = 'fe1f3cffeac480b5377023c6168b0b92';
+    final json = {
+      'id': 777001,
+      'rating': 's',
+      'flags': {'deleted': false},
+      'file': {'ext': 'webm', 'md5': md5, 'url': null},
+      'sample': {
+        'has': true,
+        'url': null,
+        'alternates': {
+          'samples': {
+            '720p': {'url': null},
+            '480p': {'url': null},
+          },
+          'variants': {
+            'mp4': {'url': null},
+          },
+        },
+      },
+      'preview': {'url': null},
+      'tags': {'general': ['animated']},
+    };
+
+    final post = E621Post.fromJson(json);
+    const sub = 'fe/1f/$md5';
+    expect(post.videoVariants, [
+      'https://static1.e621.net/data/sample/${sub}_720p.mp4',
+      'https://static1.e621.net/data/sample/${sub}_480p.mp4',
+      'https://static1.e621.net/data/sample/${sub}_alt.mp4',
+    ]);
+  });
 }

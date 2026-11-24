@@ -32,7 +32,8 @@ class _LoginPageState extends State<LoginPage> {
       _apiKeyController.text.trim(),
     );
 
-    if (success && mounted) {
+    if (!mounted) return;
+    if (success) {
       Navigator.of(context).pop();
     } else {
       scaffoldMessenger.showSnackBar(
@@ -48,7 +49,7 @@ class _LoginPageState extends State<LoginPage> {
 
     return Scaffold(
       appBar: AppBar(title: Text("Link ${authProvider.siteName} Account")),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Form(
           key: _formKey,
@@ -71,7 +72,8 @@ class _LoginPageState extends State<LoginPage> {
                   labelText: 'Username',
                   border: OutlineInputBorder(),
                 ),
-                validator: (value) => value!.isEmpty ? 'Enter your username' : null,
+                validator: (value) =>
+                    (value == null || value.trim().isEmpty) ? 'Enter your username' : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
@@ -80,8 +82,9 @@ class _LoginPageState extends State<LoginPage> {
                   labelText: 'API Key',
                   border: OutlineInputBorder(),
                 ),
-                // Removed obscureText so the user can see what they paste
-                validator: (value) => value!.isEmpty ? 'Enter your API key' : null,
+                // Intentionally visible so pasted API keys can be verified
+                validator: (value) =>
+                    (value == null || value.trim().isEmpty) ? 'Enter your API key' : null,
               ),
               const SizedBox(height: 32),
               isLoading

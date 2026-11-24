@@ -413,6 +413,200 @@ void main() {
       expect(sorted.map((p) => p.id).toList(), [2, 1]);
     });
 
+    test('searchSets queries shortname, description + post tags, and tracks lastSearchHadMore', () async {
+      final seenSetQueries = <Map<String, String>>[];
+      final mockClient = MockClient((request) async {
+        final path = request.url.path;
+        final params = request.url.queryParameters;
+
+        if (path == '/post_sets.json') {
+          seenSetQueries.add(params);
+          if (params['search[shortname]'] != null) {
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 901,
+                  'name': 'Unrelated Title',
+                  'shortname': 'wolf_pack',
+                  'description': '',
+                  'post_count': 1,
+                  'post_ids': [9001],
+                },
+              ]),
+              200,
+            );
+          }
+          if (params['search[description]'] != null) {
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 902,
+                  'name': 'Gallery Two',
+                  'shortname': 'gal2',
+                  'description': 'A collection of wolf pack art',
+                  'post_count': 1,
+                  'post_ids': [9002],
+                },
+              ]),
+              200,
+            );
+          }
+          // Generic candidate sets when wantPosts is enabled (returns 2 sets = limit 2)
+          if (!params.containsKey('search[name]')) {
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 903,
+                  'name': 'Misc A',
+                  'shortname': 'misc_a',
+                  'description': '',
+                  'post_count': 1,
+                  'post_ids': [9003],
+                },
+                {
+                  'id': 904,
+                  'name': 'Misc B',
+                  'shortname': 'misc_b',
+                  'description': '',
+                  'post_count': 1,
+                  'post_ids': [9004],
+                },
+              ]),
+              200,
+            );
+          }
+          return http.Response(jsonEncode([]), 200);
+        }
+
+        if (path == '/posts.json') {
+          return http.Response(
+            jsonEncode({
+              'posts': [
+                {
+                  'id': 9001,
+                  'rating': 's',
+                  'fav_count': 10,
+                  'file': {'ext': 'jpg', 'url': 'https://example.com/9001.jpg'},
+                  'preview': {'url': 'https://example.com/9001_p.jpg'},
+                  'tags': {'general': ['forest']},
+                },
+                {
+                  'id': 9002,
+                  'rating': 's',
+                  'fav_count': 20,
+                  'file': {'ext': 'jpg', 'url': 'https://example.com/9002.jpg'},
+                  'preview': {'url': 'https://example.com/9002_p.jpg'},
+                  'tags': {'general': ['forest']},
+                },
+                {
+                  'id': 9003,
+                  'rating': 's',
+                  'fav_count': 30,
+                  'file': {'ext': 'jpg', 'url': 'https://example.com/9003.jpg'},
+                  'preview': {'url': 'https://example.com/9003_p.jpg'},
+                  'tags': {
+                    'species': ['wolf'],
+                    'general': ['pack'],
+                  },
+                },
+              ],
+            }),
+            200,
+          );
+        }
+
+        return http.Response(jsonEncode([]), 200);
+      });
+
+      final api = E621CollectionsApi(
+        const {'User-Agent': 'Test'},
+        client: mockClient,
+        host: 'e926.net',
+      );
+
+      final results = await api.searchSets(
+        query: 'wolf pack',
+        inName: true,
+        inDescription: true,
+        inPosts: true,
+        limit: 2,
+      );
+
+      // Should have queried search[name], search[shortname], search[description], and generic candidate sets
+      expect(seenSetQueries.any((q) => q.containsKey('search[shortname]')), isTrue);
+      expect(seenSetQueries.any((q) => q.containsKey('search[description]')), isTrue);
+
+      // Set 901 matched via shortname, Set 902 via description, Set 903 via post tags (Set 904 filtered out)
+      expect(results.map((s) => s.id).toSet(), {901, 902, 903});
+      // Because a raw page returned 2 items (== limit), lastSearchHadMore is true
+      expect(api.lastSearchHadMore, isTrue);
+    });
+
+    test('getSetPosts tracks lastSetPostsHadMore and lastSetPostsHostHiddenCount when posts are filtered', () async {
+      final mockClient = MockClient((request) async {
+        return http.Response(
+          jsonEncode({
+            'posts': [
+              {
+                'id': 1,
+                'rating': 's',
+                'fav_count': 10,
+                'file': {'ext': 'jpg', 'url': 'https://example.com/1.jpg'},
+                'preview': {'url': 'https://example.com/1_p.jpg'},
+                'tags': {'general': ['safe']},
+              },
+              {
+                'id': 2,
+                'rating': 'e', // filtered out on e926.net safe mode
+                'fav_count': 10,
+                'file': {'ext': 'jpg', 'url': 'https://example.com/2.jpg'},
+                'preview': {'url': 'https://example.com/2_p.jpg'},
+                'tags': {'general': ['explicit']},
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final api = E621CollectionsApi(
+        const {'User-Agent': 'Test'},
+        client: mockClient,
+        host: 'e926.net',
+      );
+
+      final posts = await api.getSetPosts('my_set', page: 1, limit: 2);
+      expect(posts, hasLength(1));
+      expect(api.lastSetPostsHadMore, isTrue);
+      expect(api.lastSetPostsHostHiddenCount, 1);
+    });
+
+    test('BlacklistProvider.isCollectionEmpty does not hide larger sets when only sampled cover posts are blacklisted', () {
+      final storage = FakeSecureStorage();
+      final bl = BlacklistProvider(storage: storage);
+
+      final largeSetWithBlacklistedSample = E621Collection(
+        type: CollectionType.set,
+        id: 777,
+        name: 'Big_Mixed_Set',
+        shortname: 'big_mixed',
+        postCount: 25,
+        postIds: List<int>.generate(25, (i) => i + 1),
+        // Only 5 cover posts were sampled, and all 5 have a default blacklisted tag ('gore')
+        posts: List<E621Post>.generate(
+          5,
+          (i) => _buildPost(id: i + 1, general: ['gore']),
+        ),
+      );
+
+      // On e621 (isSafeMode: false), the remaining 20 uninspected posts may be clean, so don't hide the set
+      expect(bl.isCollectionEmpty(largeSetWithBlacklistedSample, isSafeMode: false), isFalse);
+      expect(
+        bl.filterPools([largeSetWithBlacklistedSample], isSafeMode: false),
+        hasLength(1),
+      );
+    });
+
     testWidgets('CollectionsPage Pools tab displays filter chips and CollectionCard shows favs and matches',
         (WidgetTester tester) async {
       final storage = FakeSecureStorage();
@@ -489,6 +683,24 @@ void main() {
       expect(find.text('In: Name + Post tags'), findsOneWidget);
       expect(find.text('50+ posts'), findsOneWidget);
     });
+
+    test('E621CollectionsApi handles non-JSON responses safely and supports bypassCache', () async {
+      final mockClient = MockClient((request) async {
+        if (request.url.path == '/pools.json') {
+          return http.Response('<html>Bad Gateway</html>', 200);
+        }
+        return http.Response('not json', 200);
+      });
+
+      final api = E621CollectionsApi(
+        const {'User-Agent': 'Test'},
+        client: mockClient,
+        host: 'e926.net',
+      );
+
+      expect(await api.searchPools(query: 'dragon'), isEmpty);
+      expect(await api.getPoolsByIds([1, 2], bypassCache: true), isEmpty);
+      expect(await api.getSetPosts('my_set'), isEmpty);
+    });
   });
 }
-

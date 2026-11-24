@@ -254,7 +254,8 @@ class BoardShareService {
       } else {
         final rawIds = map['p'] as List<dynamic>? ?? const [];
         final ids = rawIds
-            .map((e) => (e as num?)?.toInt() ?? 0)
+            .whereType<num>()
+            .map((e) => e.toInt())
             .where((id) => id > 0)
             .toList();
 
@@ -305,15 +306,54 @@ class BoardShareService {
     return base64Url.encode(compressedBytes).replaceAll('=', '');
   }
 
+  static const int _maxCompressedBase64Length = 256 * 1024;
+  static const int _maxDecompressedBytes = 1024 * 1024;
+
   static Map<String, dynamic>? _decompressJson(String base64UrlStr) {
-    final normalized = base64Url.normalize(base64UrlStr.trim());
+    final trimmed = base64UrlStr.trim();
+    if (trimmed.isEmpty || trimmed.length > _maxCompressedBase64Length) {
+      throw const FormatException('Share payload exceeds maximum size');
+    }
+    final normalized = base64Url.normalize(trimmed);
     final compressedBytes = base64Url.decode(normalized);
-    final jsonBytes = zlib.decode(compressedBytes);
+    final jsonBytes = _decodeZlibWithLimit(compressedBytes, _maxDecompressedBytes);
     final decoded = jsonDecode(utf8.decode(jsonBytes));
     if (decoded is Map<String, dynamic>) {
       return decoded;
     }
     return null;
   }
+
+  static List<int> _decodeZlibWithLimit(List<int> compressedBytes, int maxBytes) {
+    final output = <int>[];
+    final sink = ByteConversionSink.withCallback((accumulated) {
+      output.addAll(accumulated);
+    });
+    final cappedSink = _SizeCappedByteSink(sink, maxBytes);
+    final converterSink = zlib.decoder.startChunkedConversion(cappedSink);
+    converterSink.add(compressedBytes);
+    converterSink.close();
+    return output;
+  }
+}
+
+class _SizeCappedByteSink implements Sink<List<int>> {
+  final Sink<List<int>> _inner;
+  final int _maxBytes;
+  int _total = 0;
+
+  _SizeCappedByteSink(this._inner, this._maxBytes);
+
+  @override
+  void add(List<int> data) {
+    _total += data.length;
+    if (_total > _maxBytes) {
+      throw const FormatException('Decompressed share payload exceeds size limit');
+    }
+    _inner.add(data);
+  }
+
+  @override
+  void close() => _inner.close();
 }
 

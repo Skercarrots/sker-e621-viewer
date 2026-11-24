@@ -19,9 +19,10 @@ class _BlacklistPageState extends State<BlacklistPage> {
     final provider = Provider.of<BlacklistProvider>(context, listen: false);
     _controller = TextEditingController(text: provider.rawBlacklist);
     _controller.addListener(() {
-      if (!_hasChanges && _controller.text != provider.rawBlacklist) {
+      final changed = _controller.text != provider.rawBlacklist;
+      if (changed != _hasChanges) {
         setState(() {
-          _hasChanges = true;
+          _hasChanges = changed;
         });
       }
     });
@@ -36,11 +37,12 @@ class _BlacklistPageState extends State<BlacklistPage> {
   Future<void> _saveChanges({bool showSnackbar = true, bool pop = false}) async {
     final provider = Provider.of<BlacklistProvider>(context, listen: false);
     await provider.saveBlacklist(_controller.text);
+    if (!mounted) return;
     setState(() {
       _hasChanges = false;
     });
 
-    if (mounted && showSnackbar) {
+    if (showSnackbar) {
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -50,7 +52,7 @@ class _BlacklistPageState extends State<BlacklistPage> {
       );
     }
 
-    if (mounted && pop) {
+    if (pop) {
       Navigator.of(context).pop();
     }
   }
@@ -203,7 +205,6 @@ class _BlacklistPageState extends State<BlacklistPage> {
       ),
       body: Column(
         children: [
-          // Subtitle Banner matching Wolf Stash / Sker UI
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -231,7 +232,6 @@ class _BlacklistPageState extends State<BlacklistPage> {
             ),
           ),
 
-          // Multiline Text Editor
           Expanded(
             child: Container(
               color: Colors.black,
@@ -264,7 +264,6 @@ class _BlacklistPageState extends State<BlacklistPage> {
             ),
           ),
 
-          // Bottom Bar Status
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(

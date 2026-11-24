@@ -57,7 +57,6 @@ class CollectionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Top: Cover Image
             Expanded(
               child: Stack(
                 fit: StackFit.expand,
@@ -243,7 +242,6 @@ class CollectionCard extends StatelessWidget {
               ),
             ),
 
-            // Bottom: Info (Title & Counts)
             Padding(
               padding: const EdgeInsets.all(10.0),
               child: Column(

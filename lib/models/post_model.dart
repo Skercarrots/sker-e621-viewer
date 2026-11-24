@@ -357,14 +357,14 @@ class E621Post {
           // (full-size H.264). Listed in hardware-friendliness order.
           final samples = alternates['samples'];
           if ((samples is Map && samples['720p'] is Map) || alternates['720p'] is Map) {
-            videoVariants.add('https://static1.e621.net/data/sample/_720p.mp4');
+            videoVariants.add('https://static1.e621.net/data/sample/${sub}_720p.mp4');
           }
           if ((samples is Map && samples['480p'] is Map) || alternates['480p'] is Map) {
-            videoVariants.add('https://static1.e621.net/data/sample/_480p.mp4');
+            videoVariants.add('https://static1.e621.net/data/sample/${sub}_480p.mp4');
           }
           final variants = alternates['variants'];
           if (variants is Map && variants['mp4'] is Map) {
-            videoVariants.add('https://static1.e621.net/data/sample/_alt.mp4');
+            videoVariants.add('https://static1.e621.net/data/sample/${sub}_alt.mp4');
           }
         }
       }
@@ -487,14 +487,29 @@ class E621Post {
     if (trimmed.isEmpty) return false;
     final tokens = trimmed.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
     if (tokens.isEmpty) return false;
-    return tokens.every(matchesKeywordToken);
+    final list = tokens.toList();
+    final orTokens = <String>[];
+    for (final token in list) {
+      if (token.startsWith('~') && token.length > 1) {
+        orTokens.add(token.substring(1));
+      } else if (!matchesKeywordToken(token)) {
+        return false;
+      }
+    }
+    if (orTokens.isNotEmpty && !orTokens.any(_matchesPositiveKeywordToken)) {
+      return false;
+    }
+    return true;
   }
 
   /// Checks whether this post matches a single keyword/tag [token].
   bool matchesKeywordToken(String token) {
     final lower = token.trim().toLowerCase();
     if (lower.isEmpty) return true;
-    if ((lower.startsWith('-') || lower.startsWith('~')) && lower.length > 1) {
+    if (lower.startsWith('~') && lower.length > 1) {
+      return _matchesPositiveKeywordToken(lower.substring(1));
+    }
+    if (lower.startsWith('-') && lower.length > 1) {
       return !_matchesPositiveKeywordToken(lower.substring(1));
     }
     return _matchesPositiveKeywordToken(lower);
@@ -504,6 +519,54 @@ class E621Post {
     final norm = lower.replaceAll(' ', '_');
     final spaced = lower.replaceAll('_', ' ');
     final tags = allTags;
+
+    if (norm.startsWith('order:') || norm.startsWith('status:') || norm.startsWith('inpool:')) {
+      return true;
+    }
+
+    if (norm.startsWith('score:')) {
+      final valStr = norm.substring(6).trim();
+      if (valStr.startsWith('>=')) {
+        return score >= (int.tryParse(valStr.substring(2)) ?? 0);
+      } else if (valStr.startsWith('<=')) {
+        return score <= (int.tryParse(valStr.substring(2)) ?? 0);
+      } else if (valStr.startsWith('>')) {
+        return score > (int.tryParse(valStr.substring(1)) ?? 0);
+      } else if (valStr.startsWith('<')) {
+        return score < (int.tryParse(valStr.substring(1)) ?? 0);
+      }
+      final exact = int.tryParse(valStr);
+      return exact != null && score == exact;
+    }
+
+    if (norm.startsWith('favcount:')) {
+      final valStr = norm.substring(9).trim();
+      if (valStr.startsWith('>=')) {
+        return favCount >= (int.tryParse(valStr.substring(2)) ?? 0);
+      } else if (valStr.startsWith('<=')) {
+        return favCount <= (int.tryParse(valStr.substring(2)) ?? 0);
+      } else if (valStr.startsWith('>')) {
+        return favCount > (int.tryParse(valStr.substring(1)) ?? 0);
+      } else if (valStr.startsWith('<')) {
+        return favCount < (int.tryParse(valStr.substring(1)) ?? 0);
+      }
+      final exact = int.tryParse(valStr);
+      return exact != null && favCount == exact;
+    }
+
+    if (norm.startsWith('type:') || norm.startsWith('filetype:')) {
+      final extVal = norm.substring(norm.indexOf(':') + 1).trim();
+      return extension.toLowerCase() == extVal;
+    }
+
+    if (norm.startsWith('id:')) {
+      final ids = norm
+          .substring(3)
+          .split(',')
+          .map((s) => int.tryParse(s.trim()))
+          .whereType<int>();
+      return ids.contains(id);
+    }
 
     if (norm.startsWith('rating:')) {
       final r = norm.substring(7).trim();

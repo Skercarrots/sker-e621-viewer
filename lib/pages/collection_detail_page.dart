@@ -41,16 +41,16 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
 
   bool _isDescriptionExpanded = false;
 
-  // Pool posts the host (e.g. e926 safe mode) did not return, counted per fetched chunk.
+  // Pool/Set posts the host (e.g. e926 safe mode) did not return, counted per fetched chunk.
   int _poolHostHiddenCount = 0;
 
   /// Posts that exist in the collection but are not available on the current host.
-  /// Pools know this exactly per chunk; sets can only tell once every page is loaded.
+  /// Pools know this exactly per chunk; sets can also track per page or once every page is loaded.
   int get _hostHiddenCount {
     if (_collection.isPool) return _poolHostHiddenCount;
-    if (_hasMore || _isLoading) return 0;
+    if (_hasMore || _isLoading) return _poolHostHiddenCount;
     final diff = _collection.postCount - _posts.length;
-    return diff > 0 ? diff : 0;
+    return diff > _poolHostHiddenCount ? diff : _poolHostHiddenCount;
   }
 
   @override
@@ -60,6 +60,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
     _poolPostIds = List<int>.from(_collection.postIds);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final follows = Provider.of<FollowsProvider>(context, listen: false);
       follows.markSeen(_collection.type, _collection.id, _collection.postCount);
     });
@@ -67,8 +68,9 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
     _initFetch();
 
     _scrollController.addListener(() {
-      if (_scrollController.position.pixels >=
-          _scrollController.position.maxScrollExtent - 300) {
+      if (_scrollController.hasClients &&
+          _scrollController.position.pixels >=
+              _scrollController.position.maxScrollExtent - 300) {
         _fetchMorePosts();
       }
     });
@@ -91,6 +93,18 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
         setState(() {
           _collection = fresh;
           _poolPostIds = List<int>.from(fresh.postIds);
+        });
+        final follows = Provider.of<FollowsProvider>(context, listen: false);
+        if (follows.isFollowing(_collection.type, _collection.id)) {
+          follows.updateCollectionInfo(fresh);
+        }
+      }
+    } else if (!_collection.isPool &&
+        (_collection.shortname == null || _collection.shortname!.isEmpty)) {
+      final fresh = await api.getSet(_collection.id);
+      if (fresh != null && mounted) {
+        setState(() {
+          _collection = fresh;
         });
         final follows = Provider.of<FollowsProvider>(context, listen: false);
         if (follows.isFollowing(_collection.type, _collection.id)) {
@@ -126,7 +140,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
         _poolOffset = end;
 
         newPosts = await api.getPostsInOrder(chunk);
-        _poolHostHiddenCount += chunk.toSet().length - newPosts.length;
+        _poolHostHiddenCount += (chunk.length - newPosts.length).clamp(0, chunk.length);
         if (_poolOffset >= _poolPostIds.length) {
           _hasMore = false;
         }
@@ -142,7 +156,8 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
         }
 
         newPosts = await api.getSetPosts(shortname, page: _page, limit: _pageSize);
-        if (newPosts.length < _pageSize) {
+        _poolHostHiddenCount += api.lastSetPostsHostHiddenCount;
+        if (!api.lastSetPostsHadMore) {
           _hasMore = false;
         }
         _page++;
@@ -169,7 +184,7 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
         }
 
         // If too few items are visible to scroll, continue fetching next batch
-        if (_visiblePosts.length < 15 && _hasMore && newPosts.isNotEmpty) {
+        if (_visiblePosts.length < 15 && _hasMore && (_collection.isPool || _page <= 15)) {
           _fetchMorePosts();
         }
       }
@@ -227,7 +242,6 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Cover Thumbnail
               ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: SizedBox(
@@ -255,12 +269,10 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
               ),
               const SizedBox(width: 14),
 
-              // Title and metadata
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Badge category
                     Row(
                       children: [
                         Container(
@@ -303,7 +315,6 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
                     ),
                     const SizedBox(height: 6),
 
-                    // Title
                     Text(
                       _collection.displayName,
                       style: const TextStyle(
@@ -317,7 +328,6 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
                     ),
                     const SizedBox(height: 6),
 
-                    // Stats & Creator
                     Builder(
                       builder: (context) {
                         final postsForFav = _posts.isNotEmpty ? _posts : _collection.posts;
@@ -622,4 +632,3 @@ class _CollectionDetailPageState extends State<CollectionDetailPage> {
     );
   }
 }
-

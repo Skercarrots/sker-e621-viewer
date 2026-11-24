@@ -161,6 +161,16 @@ void main() {
       expect(networkCalled, isFalse);
       expect(results.map((r) => r.name), containsAll(['order:score', 'order:favcount']));
     });
+
+    test('handles HTTP errors and exceptions without throwing UnsupportedError', () async {
+      final error500Client = MockClient((_) async => http.Response('Server error', 500));
+      final service500 = TagAutocompleteService(client: error500Client);
+      expect(await service500.fetchSuggestions('dragon'), isEmpty);
+
+      final throwingClient = MockClient((_) async => throw Exception('Network down'));
+      final serviceThrow = TagAutocompleteService(client: throwingClient);
+      expect(await serviceThrow.fetchSuggestions('order'), isNotEmpty);
+    });
   });
 
   group('TagSearchBar Widget Tests', () {

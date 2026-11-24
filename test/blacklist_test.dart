@@ -358,6 +358,26 @@ young
       expect(deletedPost.fileUrl, isNull);
       expect(deletedPost.previewUrl, isNull);
     });
+
+    test('supports ~ OR operator and <= / >= / invalid score rules', () async {
+      await provider.saveBlacklist('rating:e ~gore ~vore\nscore:<=5\nscore:>=100\nscore:abc');
+
+      final explicitGore = _makePost(id: 1, rating: 'e', general: ['gore'], score: 20);
+      final explicitVore = _makePost(id: 2, rating: 'e', general: ['vore'], score: 20);
+      final explicitClean = _makePost(id: 3, rating: 'e', general: ['solo'], score: 20);
+      final safeGore = _makePost(id: 4, rating: 's', general: ['gore'], score: 20);
+
+      expect(provider.isPostBlacklisted(explicitGore), isTrue);
+      expect(provider.isPostBlacklisted(explicitVore), isTrue);
+      expect(provider.isPostBlacklisted(explicitClean), isFalse);
+      expect(provider.isPostBlacklisted(safeGore), isFalse);
+
+      expect(provider.isPostBlacklisted(_makePost(id: 5, score: 5)), isTrue);
+      expect(provider.isPostBlacklisted(_makePost(id: 6, score: 6)), isFalse);
+      expect(provider.isPostBlacklisted(_makePost(id: 7, score: 100)), isTrue);
+      expect(provider.isPostBlacklisted(_makePost(id: 8, score: 0)), isTrue);
+      expect(provider.isPostBlacklisted(_makePost(id: 9, score: 10)), isFalse);
+    });
   });
 }
 

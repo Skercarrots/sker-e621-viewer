@@ -61,11 +61,13 @@ class FollowsProvider with ChangeNotifier {
 
   /// Loads followed collections from secure storage
   Future<void> loadFollows() async {
+    final key = _currentStorageKey;
     _isLoading = true;
     _safeNotify();
 
     try {
-      final String? data = await _storage.read(key: _currentStorageKey);
+      final String? data = await _storage.read(key: key);
+      if (key != _currentStorageKey) return;
       if (data != null && data.isNotEmpty) {
         final List<dynamic> decoded = jsonDecode(data);
         _follows = decoded
@@ -79,7 +81,9 @@ class FollowsProvider with ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Error loading follows: $e');
-      _follows = [];
+      if (key == _currentStorageKey) {
+        _follows = [];
+      }
     } finally {
       _isLoading = false;
       _safeNotify();
@@ -125,7 +129,6 @@ class FollowsProvider with ChangeNotifier {
     );
 
     if (index != -1) {
-      // Unfollow
       _follows.removeAt(index);
       await _persistFollows();
       notifyListeners();
@@ -182,28 +185,34 @@ class FollowsProvider with ChangeNotifier {
   /// Background refresh of all followed collections from the API to check for new posts
   Future<void> refreshFollowedCounts(E621CollectionsApi api) async {
     if (_isRefreshing || _follows.isEmpty) return;
+    final key = _currentStorageKey;
+    final snapshot = List<FollowedCollection>.from(_follows);
     _isRefreshing = true;
     _safeNotify();
 
     try {
-      final poolIds = _follows
+      final poolIds = snapshot
           .where((f) => f.collection.isPool)
           .map((f) => f.collection.id)
           .toList();
 
-      final setIds = _follows
+      final setIds = snapshot
           .where((f) => !f.collection.isPool)
           .map((f) => f.collection.id)
           .toList();
 
-      final List<E621Collection> freshPools =
-          poolIds.isNotEmpty ? await api.getPoolsByIds(poolIds) : [];
+      final List<E621Collection> freshPools = poolIds.isNotEmpty
+          ? await api.getPoolsByIds(poolIds, bypassCache: true)
+          : [];
       final List<E621Collection> freshSets =
           setIds.isNotEmpty ? await api.getSetsByIds(setIds) : [];
 
+      if (key != _currentStorageKey) return;
+
       final allFresh = [...freshPools, ...freshSets];
-      // Attach covers if any missing
       final withCovers = await api.attachCovers(allFresh);
+      if (key != _currentStorageKey) return;
+
       final freshMap = {for (var c in withCovers) c.key: c};
 
       bool changed = false;
@@ -211,7 +220,6 @@ class FollowsProvider with ChangeNotifier {
         final current = _follows[i];
         final fresh = freshMap[current.collection.key];
         if (fresh != null) {
-          // Merge cover URL if current had it and fresh doesn't or vice versa
           final coverUrl = fresh.coverUrl ?? current.collection.coverUrl;
           final updatedCol = fresh.copyWith(coverUrl: coverUrl);
           if (updatedCol.postCount != current.collection.postCount ||

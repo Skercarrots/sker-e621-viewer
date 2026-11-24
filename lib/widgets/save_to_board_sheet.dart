@@ -152,7 +152,6 @@ class _SaveToBoardSheetState extends State<SaveToBoardSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Top Drag Handle
               const SizedBox(height: 12),
               Container(
                 width: 40,
@@ -164,12 +163,11 @@ class _SaveToBoardSheetState extends State<SaveToBoardSheet> {
               ),
               const SizedBox(height: 12),
 
-              // Header
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: Row(
                   children: [
-                    if (widget.post.previewUrl != null)
+                    if (widget.post.previewUrl != null && widget.post.previewUrl!.isNotEmpty)
                       ClipRRect(
                         borderRadius: BorderRadius.circular(6),
                         child: CachedNetworkImage(
@@ -177,6 +175,12 @@ class _SaveToBoardSheetState extends State<SaveToBoardSheet> {
                           width: 44,
                           height: 44,
                           fit: BoxFit.cover,
+                          errorWidget: (context, url, error) => Container(
+                            width: 44,
+                            height: 44,
+                            color: Colors.grey[800],
+                            child: const Icon(Icons.broken_image, size: 20),
+                          ),
                         ),
                       ),
                     const SizedBox(width: 12),
@@ -207,7 +211,6 @@ class _SaveToBoardSheetState extends State<SaveToBoardSheet> {
               ),
               const Divider(height: 24),
 
-              // Create Board Action
               ListTile(
                 leading: Container(
                   width: 50,
@@ -231,7 +234,6 @@ class _SaveToBoardSheetState extends State<SaveToBoardSheet> {
 
               const Divider(height: 16),
 
-              // Boards list
               if (boards.isEmpty)
                 Padding(
                   padding: const EdgeInsets.all(24.0),

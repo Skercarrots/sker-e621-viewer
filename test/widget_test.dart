@@ -544,5 +544,30 @@ void main() {
       expect(boards2.boards.first.postIds, [101]);
       expect(boards2.boards.first.posts.first.previewUrl, 'https://e621.net/preview101.jpg');
     });
+
+    test('BoardsProvider does not resurrect deleted legacy user boards on subsequent updateForUser calls', () async {
+      final fakeStorage = FakeSecureStorage();
+      final legacyBoard = Board(
+        id: 'legacy_1',
+        name: 'Legacy Board',
+        createdAt: DateTime(2025, 1, 1),
+        postIds: const [101],
+        posts: const [],
+      );
+      await fakeStorage.write(
+        key: 'boards_user_SkerCreator',
+        value: jsonEncode([legacyBoard.toJson()]),
+      );
+
+      final provider = BoardsProvider(storage: fakeStorage);
+      await provider.updateForUser('SkerCreator', isGuest: false);
+      expect(provider.boards.map((b) => b.id), ['legacy_1']);
+
+      await provider.deleteBoard('legacy_1');
+      expect(provider.boards, isEmpty);
+
+      await provider.updateForUser('SkerCreator', isGuest: false);
+      expect(provider.boards, isEmpty);
+    });
   });
 }

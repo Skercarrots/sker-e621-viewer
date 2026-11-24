@@ -27,7 +27,7 @@ class E621Collection {
   /// Sets only. Used to query posts via `set:<shortname>`.
   final String? shortname;
 
-  /// Pools: post ids in reading order. Sets: up to the last 5 post ids for cover/fav resolution.
+  /// Pools: post ids in reading order. Sets: up to the last 50 post ids for cover/fav resolution.
   final List<int> postIds;
 
   /// Post used as the cover image.
@@ -135,21 +135,70 @@ class E621Collection {
     return false;
   }
 
+  static bool _isPostMetaToken(String token) {
+    final core = (token.startsWith('-') || token.startsWith('~')) && token.length > 1
+        ? token.substring(1)
+        : token;
+    return core.startsWith('rating:') ||
+        core.startsWith('score:') ||
+        core.startsWith('favcount:') ||
+        core.startsWith('order:') ||
+        core.startsWith('type:') ||
+        core.startsWith('filetype:') ||
+        core.startsWith('id:') ||
+        core.startsWith('status:') ||
+        core.startsWith('inpool:');
+  }
+
+  static bool _haystackContainsToken(String haystack, String core) {
+    final cleaned = core.replaceAll('*', ' ').trim();
+    if (cleaned.isEmpty) return true;
+    if (core.contains('*')) {
+      final parts = core
+          .split('*')
+          .map((p) => p.trim())
+          .where((p) => p.isNotEmpty)
+          .toList();
+      return parts.every((part) {
+        final norm = part.replaceAll(' ', '_');
+        final spaced = part.replaceAll('_', ' ');
+        return haystack.contains(norm) || haystack.contains(spaced);
+      });
+    }
+    final norm = core.replaceAll(' ', '_');
+    final spaced = core.replaceAll('_', ' ');
+    return haystack.contains(norm) || haystack.contains(spaced);
+  }
+
   static bool _tokensMatch(String rawHaystack, String query) {
     final trimmed = query.trim().toLowerCase();
     if (trimmed.isEmpty) return true;
-    final tokens = trimmed.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
-    if (tokens.isEmpty) return true;
-    final haystack = rawHaystack.toLowerCase();
+    final allTokens = trimmed.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+    if (allTokens.isEmpty) return true;
 
-    for (final rawToken in tokens) {
-      final isNegated = (rawToken.startsWith('-') || rawToken.startsWith('~')) && rawToken.length > 1;
+    // Ignore post-specific metatags (e.g. rating:s, score:>10) when matching
+    // collection titles/descriptions, as long as there is at least one keyword token.
+    final nonMetaTokens = allTokens.where((t) => !_isPostMetaToken(t)).toList();
+    if (nonMetaTokens.isEmpty) return false;
+
+    final haystack = rawHaystack.toLowerCase();
+    final orTokens = <String>[];
+
+    for (final rawToken in nonMetaTokens) {
+      if (rawToken.startsWith('~') && rawToken.length > 1) {
+        orTokens.add(rawToken.substring(1));
+        continue;
+      }
+      final isNegated = rawToken.startsWith('-') && rawToken.length > 1;
       final core = isNegated ? rawToken.substring(1) : rawToken;
-      final norm = core.replaceAll(' ', '_');
-      final spaced = core.replaceAll('_', ' ');
-      final matched = haystack.contains(norm) || haystack.contains(spaced);
+      final matched = _haystackContainsToken(haystack, core);
       if (isNegated && matched) return false;
       if (!isNegated && !matched) return false;
+    }
+
+    if (orTokens.isNotEmpty &&
+        !orTokens.any((core) => _haystackContainsToken(haystack, core))) {
+      return false;
     }
     return true;
   }
@@ -191,7 +240,7 @@ class E621Collection {
     final rawIds = json['post_ids'];
     final sampleIds = <int>[];
     if (rawIds is List && rawIds.isNotEmpty) {
-      final start = math.max(0, rawIds.length - 15);
+      final start = math.max(0, rawIds.length - 50);
       for (var i = rawIds.length - 1; i >= start; i--) {
         final v = rawIds[i];
         if (v is num) sampleIds.add(v.toInt());
@@ -202,9 +251,11 @@ class E621Collection {
       id: (json['id'] as num?)?.toInt() ?? 0,
       name: json['name']?.toString() ?? '',
       description: json['description']?.toString() ?? '',
-      postCount: (json['post_count'] as num?)?.toInt() ?? 0,
+      postCount: (json['post_count'] as num?)?.toInt() ??
+          (rawIds is List ? rawIds.length : 0),
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
       updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? ''),
+      creatorName: json['creator_name']?.toString(),
       shortname: json['shortname']?.toString(),
       postIds: sampleIds,
       coverPostId: sampleIds.isNotEmpty ? sampleIds.first : null,
@@ -319,4 +370,3 @@ class FollowedCollection {
     );
   }
 }
-
