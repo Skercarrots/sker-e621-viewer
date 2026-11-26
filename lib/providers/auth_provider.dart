@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../models/user_model.dart';
 import '../models/post_model.dart';
+import '../services/local_data_vault.dart';
 
 class AuthProvider with ChangeNotifier {
   static const String defaultHost = 'e926.net';
@@ -14,6 +15,7 @@ class AuthProvider with ChangeNotifier {
   static String currentHost = defaultHost;
 
   final FlutterSecureStorage _storage;
+  final LocalDataVault? _vault;
   final http.Client _client;
   final bool _ownsClient;
   E621User? _user;
@@ -24,11 +26,39 @@ class AuthProvider with ChangeNotifier {
   String _host = defaultHost;
   bool _isOver18Verified = false;
 
-  AuthProvider({FlutterSecureStorage? storage, http.Client? client})
-      : _storage = storage ?? const FlutterSecureStorage(),
+  AuthProvider({
+    FlutterSecureStorage? storage,
+    LocalDataVault? vault,
+    http.Client? client,
+  })  : _storage = storage ?? const FlutterSecureStorage(),
+        _vault = vault,
         _client = client ?? http.Client(),
         _ownsClient = client == null {
     currentHost = _host;
+  }
+
+  Future<String?> _readStructured(String key) async {
+    if (_vault != null) {
+      final fromVault = await _vault.read(key);
+      if (fromVault != null) return fromVault;
+    }
+    return _storage.read(key: key);
+  }
+
+  Future<void> _writeStructured(String key, String value) async {
+    if (_vault != null) {
+      await _vault.write(key, value);
+    } else {
+      await _storage.write(key: key, value: value);
+    }
+  }
+
+  Future<void> _deleteStructured(String key) async {
+    if (_vault != null) {
+      await _vault.delete(key);
+    } else {
+      await _storage.delete(key: key);
+    }
   }
 
   http.Client get httpClient => _client;
@@ -85,8 +115,8 @@ class AuthProvider with ChangeNotifier {
     _host = normalized;
     currentHost = normalized;
 
-    await _storage.write(key: storageKeyOver18, value: 'true');
-    await _storage.write(key: storageKeySiteHost, value: normalized);
+    await _writeStructured(storageKeyOver18, 'true');
+    await _writeStructured(storageKeySiteHost, normalized);
 
     _notifyFavoritesChanged();
     return true;
@@ -117,9 +147,9 @@ class AuthProvider with ChangeNotifier {
         _storage.read(key: 'username'),
         _storage.read(key: 'apiKey'),
         _storage.read(key: 'user_profile'),
-        _storage.read(key: 'is_guest_mode'),
-        _storage.read(key: storageKeySiteHost),
-        _storage.read(key: storageKeyOver18),
+        _readStructured('is_guest_mode'),
+        _readStructured(storageKeySiteHost),
+        _readStructured(storageKeyOver18),
       ]);
       final storedUsername = results[0];
       final storedApiKey = results[1];
@@ -163,10 +193,17 @@ class AuthProvider with ChangeNotifier {
           _refreshUserDataInBackground(storedUsername);
         }
       } else if (storedGuestMode == 'true') {
+        _user = null;
+        _username = null;
+        _apiKey = null;
         _isGuestMode = true;
         _isLoading = false;
         notifyListeners();
       } else {
+        _user = null;
+        _username = null;
+        _apiKey = null;
+        _isGuestMode = false;
         _isLoading = false;
         notifyListeners();
       }
@@ -214,7 +251,7 @@ class AuthProvider with ChangeNotifier {
     _isLoading = true;
     _isGuestMode = false;
     _knownFavoriteIds.clear();
-    await _storage.delete(key: 'is_guest_mode');
+    await _deleteStructured('is_guest_mode');
     notifyListeners();
 
     try {
@@ -265,13 +302,51 @@ class AuthProvider with ChangeNotifier {
     await _storage.delete(key: 'username');
     await _storage.delete(key: 'apiKey');
     await _storage.delete(key: 'user_profile');
-    await _storage.delete(key: 'is_guest_mode');
+    await _deleteStructured('is_guest_mode');
     _user = null;
     _username = null;
     _apiKey = null;
     _isGuestMode = false;
     _knownFavoriteIds.clear();
     notifyListeners();
+    _notifyFavoritesChanged();
+  }
+
+  /// Exports sensitive credentials directly from secure storage.
+  Future<Map<String, String?>> exportCredentials() async {
+    final results = await Future.wait([
+      _storage.read(key: 'username'),
+      _storage.read(key: 'apiKey'),
+      _storage.read(key: 'user_profile'),
+    ]);
+    return {
+      'username': results[0],
+      'apiKey': results[1],
+      'user_profile': results[2],
+    };
+  }
+
+  /// Imports credentials into secure storage and reloads auth state locally.
+  Future<void> importCredentials({
+    required String username,
+    required String apiKey,
+    String? userProfileJson,
+  }) async {
+    await _storage.write(key: 'username', value: username);
+    await _storage.write(key: 'apiKey', value: apiKey);
+    if (userProfileJson != null && userProfileJson.isNotEmpty) {
+      await _storage.write(key: 'user_profile', value: userProfileJson);
+    } else {
+      await _storage.delete(key: 'user_profile');
+    }
+    await _deleteStructured('is_guest_mode');
+    await tryAutoLogin(refreshInBackground: false);
+    _notifyFavoritesChanged();
+  }
+
+  Future<void> reloadFromStorage({bool refreshInBackground = false}) async {
+    _knownFavoriteIds.clear();
+    await tryAutoLogin(refreshInBackground: refreshInBackground);
     _notifyFavoritesChanged();
   }
 
@@ -322,16 +397,16 @@ class AuthProvider with ChangeNotifier {
   Future<void> setGuestMode(bool value) async {
     _isGuestMode = value;
     if (value) {
-      await _storage.write(key: 'is_guest_mode', value: 'true');
+      await _writeStructured('is_guest_mode', 'true');
     } else {
-      await _storage.delete(key: 'is_guest_mode');
+      await _deleteStructured('is_guest_mode');
     }
     _knownFavoriteIds.clear();
     notifyListeners();
   }
 
   Future<List<E621Post>> getGuestFavorites() async {
-    final String? data = await _storage.read(key: 'guest_favorites');
+    final String? data = await _readStructured('guest_favorites');
     if (data == null || data.isEmpty) return [];
     try {
       final List<dynamic> decoded = jsonDecode(data);
@@ -355,7 +430,7 @@ class AuthProvider with ChangeNotifier {
     }
     
     final String encoded = jsonEncode(favs.map((e) => e.toJson()).toList());
-    await _storage.write(key: 'guest_favorites', value: encoded);
+    await _writeStructured('guest_favorites', encoded);
     
     _notifyFavoritesChanged();
     return true;

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../models/board_model.dart';
 import '../models/ref_board_model.dart';
 import '../pages/shared_board_preview_page.dart';
+import '../providers/ref_boards_provider.dart';
 import '../services/board_share_service.dart';
 
 /// Opens a bottom sheet with the generated Share Code for a [Board].
@@ -374,8 +376,17 @@ class _ImportSharedSheetState extends State<_ImportSharedSheet> {
     );
   }
 
+  bool _isArtistModeEnabled(BuildContext context) {
+    try {
+      return Provider.of<RefBoardsProvider>(context).artistModeEnabled;
+    } on ProviderNotFoundException {
+      return false;
+    }
+  }
+
   Widget _buildDetectedCard(SharedBoardPayload payload, {required bool isFromClipboard}) {
     final isRef = payload.isRefCanvas;
+    final artistModeEnabled = _isArtistModeEnabled(context);
     final accent = isRef ? Colors.cyanAccent : Colors.blueAccent;
     final unit = isRef
         ? (payload.itemCount == 1 ? 'ref' : 'refs')
@@ -397,11 +408,24 @@ class _ImportSharedSheetState extends State<_ImportSharedSheet> {
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              '${payload.name} (${payload.itemCount} $unit)',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${payload.name} (${payload.itemCount} $unit)',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (isRef && !artistModeEnabled) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Ref Canvas • Requires Artist Mode',
+                    style: TextStyle(fontSize: 11, color: Colors.grey[400]),
+                  ),
+                ],
+              ],
             ),
           ),
           if (isFromClipboard && _detectedClipboardRaw != null)

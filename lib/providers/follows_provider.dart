@@ -4,17 +4,86 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/collection_model.dart';
 import '../services/e621_collections_api.dart';
+import '../services/local_data_vault.dart';
 
 class FollowsProvider with ChangeNotifier {
   final FlutterSecureStorage _storage;
+  final LocalDataVault? _vault;
   List<FollowedCollection> _follows = [];
   bool _isLoading = false;
   bool _isRefreshing = false;
   bool _isInitialized = false;
   String _currentStorageKey = 'follows_guest';
 
-  FollowsProvider({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+  FollowsProvider({FlutterSecureStorage? storage, LocalDataVault? vault})
+      : _storage = storage ?? const FlutterSecureStorage(),
+        _vault = vault;
+
+  String get currentStorageKey => _currentStorageKey;
+
+  Future<String?> _readKey(String key) async {
+    if (_vault != null) {
+      final fromVault = await _vault.read(key);
+      if (fromVault != null) return fromVault;
+    }
+    return _storage.read(key: key);
+  }
+
+  Future<void> _writeKey(String key, String value) async {
+    if (_vault != null) {
+      await _vault.write(key, value);
+    } else {
+      await _storage.write(key: key, value: value);
+    }
+  }
+
+  Future<void> reloadFromStorage() => loadFollows();
+
+  /// Reads all stored follow namespaces (`follows_guest`, `follows_user_*`).
+  Future<Map<String, List<FollowedCollection>>> readAllFollowNamespaces() async {
+    final result = <String, List<FollowedCollection>>{};
+
+    List<FollowedCollection> parseList(String raw) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          return decoded
+              .whereType<Map<String, dynamic>>()
+              .map((e) => FollowedCollection.fromJson(e))
+              .toList();
+        }
+      } catch (_) {}
+      return [];
+    }
+
+    if (_vault != null) {
+      final vaultFollows = await _vault.readAll(prefix: 'follows_');
+      for (final entry in vaultFollows.entries) {
+        if (entry.value.isNotEmpty) {
+          result[entry.key] = parseList(entry.value);
+        }
+      }
+      return result;
+    }
+
+    // Fallback when running without LocalDataVault (e.g. unit tests)
+    try {
+      final all = await _storage.readAll();
+      for (final entry in all.entries) {
+        if (entry.key.startsWith('follows_') && entry.value.isNotEmpty) {
+          result[entry.key] = parseList(entry.value);
+        }
+      }
+    } catch (_) {
+      for (final key in {_currentStorageKey, 'follows_guest'}) {
+        final raw = await _storage.read(key: key);
+        if (raw != null && raw.isNotEmpty) {
+          result[key] = parseList(raw);
+        }
+      }
+    }
+    return result;
+  }
 
   List<FollowedCollection> get follows => List.unmodifiable(_follows);
 
@@ -66,7 +135,7 @@ class FollowsProvider with ChangeNotifier {
     _safeNotify();
 
     try {
-      final String? data = await _storage.read(key: key);
+      final String? data = await _readKey(key);
       if (key != _currentStorageKey) return;
       if (data != null && data.isNotEmpty) {
         final List<dynamic> decoded = jsonDecode(data);
@@ -102,7 +171,7 @@ class FollowsProvider with ChangeNotifier {
     try {
       final String encoded =
           jsonEncode(_follows.map((f) => f.toJson()).toList());
-      await _storage.write(key: _currentStorageKey, value: encoded);
+      await _writeKey(_currentStorageKey, encoded);
     } catch (e) {
       debugPrint('Error persisting follows: $e');
     }

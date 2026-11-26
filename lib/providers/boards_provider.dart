@@ -4,17 +4,38 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/board_model.dart';
 import '../models/post_model.dart';
+import '../services/local_data_vault.dart';
 
 class BoardsProvider with ChangeNotifier {
   final FlutterSecureStorage _storage;
+  final LocalDataVault? _vault;
   static const String _localStorageKey = 'boards_local';
   List<Board> _boards = [];
   bool _isLoading = false;
   bool _isInitialized = false;
   final Set<String> _migratedUsers = {};
 
-  BoardsProvider({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+  BoardsProvider({FlutterSecureStorage? storage, LocalDataVault? vault})
+      : _storage = storage ?? const FlutterSecureStorage(),
+        _vault = vault;
+
+  Future<String?> _readKey(String key) async {
+    if (_vault != null) {
+      final fromVault = await _vault.read(key);
+      if (fromVault != null) return fromVault;
+    }
+    return _storage.read(key: key);
+  }
+
+  Future<void> _writeKey(String key, String value) async {
+    if (_vault != null) {
+      await _vault.write(key, value);
+    } else {
+      await _storage.write(key: key, value: value);
+    }
+  }
+
+  Future<void> reloadFromStorage() => loadBoards();
 
   List<Board> get boards => List.unmodifiable(_boards);
   bool get isLoading => _isLoading;
@@ -82,20 +103,20 @@ class BoardsProvider with ChangeNotifier {
     }
   }
 
-  /// Loads boards from local secure storage
+  /// Loads boards from local storage
   Future<void> loadBoards() async {
     _isLoading = true;
     _safeNotify();
 
     try {
-      String? data = await _storage.read(key: _localStorageKey);
+      String? data = await _readKey(_localStorageKey);
 
       // Migration fallback: if boards_local is empty, import from legacy guest storage
       if (data == null || data.isEmpty) {
-        final guestData = await _storage.read(key: 'boards_guest');
+        final guestData = await _readKey('boards_guest');
         if (guestData != null && guestData.isNotEmpty) {
           data = guestData;
-          await _storage.write(key: _localStorageKey, value: data);
+          await _writeKey(_localStorageKey, data);
         }
       }
 
@@ -119,11 +140,11 @@ class BoardsProvider with ChangeNotifier {
     }
   }
 
-  /// Saves boards to local secure storage
+  /// Saves boards to local storage
   Future<void> _persistBoards() async {
     try {
       final String encoded = jsonEncode(_boards.map((b) => b.toJson()).toList());
-      await _storage.write(key: _localStorageKey, value: encoded);
+      await _writeKey(_localStorageKey, encoded);
     } catch (e) {
       debugPrint('Error persisting boards: $e');
     }

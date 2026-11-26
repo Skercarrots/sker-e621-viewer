@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/blacklist_provider.dart';
+import '../providers/ref_boards_provider.dart';
+import '../services/backup_service.dart';
+import '../widgets/data_backup_sheets.dart';
 import 'blacklist_page.dart';
 import 'login_page.dart';
 
 class SettingsPage extends StatelessWidget {
-  const SettingsPage({super.key});
+  final BackupFileIo? backupFileIo;
+
+  const SettingsPage({super.key, this.backupFileIo});
 
   Future<bool> _showOver18Dialog(BuildContext context) async {
     final result = await showDialog<bool>(
@@ -129,10 +134,21 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+  RefBoardsProvider? _maybeRefBoards(BuildContext context) {
+    try {
+      return Provider.of<RefBoardsProvider>(context);
+    } on ProviderNotFoundException {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
     final blacklistProvider = Provider.of<BlacklistProvider>(context);
+    final refBoardsProvider = _maybeRefBoards(context);
+    final bool isArtistMode = refBoardsProvider?.artistModeEnabled ?? false;
+    final bool hasSavedCanvases = refBoardsProvider?.refBoards.isNotEmpty ?? false;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -160,6 +176,56 @@ class SettingsPage extends StatelessWidget {
             ),
             onTap: () => _showChangeHostFlow(context, authProvider),
           ),
+
+          if (refBoardsProvider != null)
+            SwitchListTile(
+              secondary: Icon(
+                Icons.brush_outlined,
+                color: isArtistMode ? Colors.cyanAccent : Colors.white,
+              ),
+              title: const Text(
+                "Artist Mode",
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                "Show Reference Canvas tools for collecting, arranging, and studying art references",
+                style: TextStyle(color: Colors.grey[400], fontSize: 13),
+              ),
+              value: isArtistMode,
+              activeThumbColor: Colors.cyanAccent,
+              onChanged: (val) async {
+                await refBoardsProvider.setArtistModeEnabled(val);
+                if (!context.mounted) return;
+                final messenger = ScaffoldMessenger.of(context);
+                messenger.clearSnackBars();
+                if (val) {
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Artist Mode enabled — Ref Canvas is now available in Account and Post pages.',
+                      ),
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
+                } else if (refBoardsProvider.refBoards.isNotEmpty) {
+                  final count = refBoardsProvider.refBoards.length;
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        'Artist Mode disabled. Your $count ref ${count == 1 ? 'canvas is' : 'canvases are'} safely kept.',
+                      ),
+                      duration: const Duration(seconds: 4),
+                      action: SnackBarAction(
+                        label: 'UNDO',
+                        onPressed: () {
+                          refBoardsProvider.setArtistModeEnabled(true);
+                        },
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
 
           const Divider(color: Colors.white12, height: 28),
 
@@ -250,6 +316,54 @@ class SettingsPage extends StatelessWidget {
             onChanged: (val) {
               blacklistProvider.setHideEmptyCollections(val);
             },
+          ),
+
+          const Divider(color: Colors.white12, height: 28),
+
+          _buildSectionHeader(context, "DATA & BACKUP"),
+
+          ListTile(
+            leading: const Icon(Icons.backup_outlined, color: Colors.white),
+            title: const Text(
+              "Export data",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              (isArtistMode || hasSavedCanvases)
+                  ? "Save boards, ref canvases, tags, follows, and settings"
+                  : "Save boards, tags, follows, and settings",
+              style: TextStyle(color: Colors.grey[400], fontSize: 13),
+            ),
+            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+            onTap: () => showExportDataSheet(context, fileIo: backupFileIo),
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.restore_outlined, color: Colors.white),
+            title: const Text(
+              "Import data",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              "Restore or merge from a .skerbackup file",
+              style: TextStyle(color: Colors.grey[400], fontSize: 13),
+            ),
+            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+            onTap: () => showImportDataFlow(context, fileIo: backupFileIo),
+          ),
+
+          ListTile(
+            leading: const Icon(Icons.history_outlined, color: Colors.white),
+            title: const Text(
+              "Recovery snapshots",
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              "Restore automatic pre-update or pre-import backups",
+              style: TextStyle(color: Colors.grey[400], fontSize: 13),
+            ),
+            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+            onTap: () => showRecoverySnapshotsSheet(context),
           ),
 
           const Divider(color: Colors.white12, height: 28),

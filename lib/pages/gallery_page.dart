@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/blacklist_provider.dart';
 import '../services/tag_autocomplete_service.dart';
+import '../widgets/app_options_menu_button.dart';
 import '../widgets/tag_search_bar.dart';
 import 'settings_page.dart';
 
@@ -180,13 +181,12 @@ class _E621GalleryPageState extends State<E621GalleryPage> {
           onCleared: () => _startSearch(''),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsPage()),
-            ),
+          AppOptionsMenuButton(
+            autocompleteService: widget.autocompleteService,
+            onSearchTags: (query) {
+              _searchController.text = query;
+              _startSearch(query);
+            },
           ),
         ],
         centerTitle: true,

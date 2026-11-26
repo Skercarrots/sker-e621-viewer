@@ -62,6 +62,8 @@ class BoardDetailPage extends StatelessWidget {
     final boardsProvider = Provider.of<BoardsProvider>(context);
     final auth = Provider.of<AuthProvider>(context);
     final blacklist = Provider.of<BlacklistProvider>(context);
+    final refProvider = Provider.of<RefBoardsProvider>(context);
+    final artistMode = refProvider.artistModeEnabled;
     final board = boardsProvider.getBoardById(boardId);
 
     if (board == null) {
@@ -98,20 +100,20 @@ class BoardDetailPage extends StatelessWidget {
               author: auth.isLoggedIn ? auth.user?.name : null,
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.draw, color: Colors.cyanAccent),
-            tooltip: 'Open as Reference Canvas',
-            onPressed: () async {
-              final refProvider = Provider.of<RefBoardsProvider>(context, listen: false);
-              final refBoard = await refProvider.createFromSavedBoard(board);
-              if (context.mounted) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: refBoard.id)),
-                );
-              }
-            },
-          ),
+          if (artistMode)
+            IconButton(
+              icon: const Icon(Icons.draw, color: Colors.cyanAccent),
+              tooltip: 'Open as Reference Canvas',
+              onPressed: () async {
+                final refBoard = await refProvider.createFromSavedBoard(board);
+                if (context.mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => RefCanvasPage(boardId: refBoard.id)),
+                  );
+                }
+              },
+            ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) async {
@@ -122,7 +124,6 @@ class BoardDetailPage extends StatelessWidget {
                   author: auth.isLoggedIn ? auth.user?.name : null,
                 );
               } else if (value == 'open_ref') {
-                final refProvider = Provider.of<RefBoardsProvider>(context, listen: false);
                 final refBoard = await refProvider.createFromSavedBoard(board);
                 if (context.mounted) {
                   Navigator.push(
@@ -147,16 +148,22 @@ class BoardDetailPage extends StatelessWidget {
                   ],
                 ),
               ),
-              const PopupMenuItem(
-                value: 'open_ref',
-                child: Row(
-                  children: [
-                    Icon(Icons.draw, color: Colors.cyanAccent, size: 20),
-                    SizedBox(width: 8),
-                    Text('Open as Ref Canvas'),
-                  ],
+              if (artistMode)
+                const PopupMenuItem(
+                  value: 'open_ref',
+                  child: Row(
+                    children: [
+                      Icon(Icons.draw, color: Colors.cyanAccent, size: 20),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Open as Ref Canvas',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
               const PopupMenuItem(
                 value: 'rename',
                 child: Row(

@@ -11,12 +11,14 @@ import 'package:video_player/video_player.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:skerdev_e621/models/post_model.dart';
 import 'package:skerdev_e621/pages/details_page.dart';
+import 'package:skerdev_e621/pages/fullscreen_media_page.dart';
 import 'package:skerdev_e621/providers/auth_provider.dart';
 import 'package:skerdev_e621/providers/blacklist_provider.dart';
 import 'package:skerdev_e621/providers/boards_provider.dart';
 import 'package:skerdev_e621/providers/follows_provider.dart';
 import 'package:skerdev_e621/providers/ref_boards_provider.dart';
 import 'package:skerdev_e621/services/e621_collections_api.dart';
+import 'package:skerdev_e621/widgets/zoomable_image_view.dart';
 import 'widget_test.dart';
 
 class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
@@ -31,6 +33,7 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   final Set<String> failingUrls = {};
   final Set<String> pendingUrls = {};
   final List<Duration> seeks = [];
+  final List<double> playbackSpeeds = [];
 
   @override
   Future<void> init() async {}
@@ -117,7 +120,9 @@ class FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   Future<void> setVolume(int textureId, double volume) async {}
 
   @override
-  Future<void> setPlaybackSpeed(int textureId, double speed) async {}
+  Future<void> setPlaybackSpeed(int textureId, double speed) async {
+    playbackSpeeds.add(speed);
+  }
 
   @override
   Future<void> seekTo(int textureId, Duration position) async {
@@ -194,9 +199,11 @@ void main() {
     expect(find.text('File #1001'), findsOneWidget);
     expect(find.text('1 of 2'), findsOneWidget);
 
-    // Verify Download and Save to Board buttons are present in the AppBar
+    // Verify Download button is in the AppBar, redundant AppBar Save button is removed,
+    // and Save to Board remains below the art near post details
     expect(find.byTooltip('Download Art'), findsOneWidget);
-    expect(find.byTooltip('Save to Board'), findsOneWidget);
+    expect(find.byTooltip('Save to Board'), findsNothing);
+    expect(find.text('Save to Board'), findsOneWidget);
 
     // Swipe left to go to the second post
     await tester.fling(find.byType(PageView), const Offset(-500, 0), 1000);
@@ -738,5 +745,498 @@ void main() {
       'https://static1.e621.net/data/sample/${sub}_480p.mp4',
       'https://static1.e621.net/data/sample/${sub}_alt.mp4',
     ]);
+  });
+
+  testWidgets(
+      'Tapping an image opens fullscreen zoom viewer, supports double-tap zoom/reset, cross-post swipe, and syncs index on exit',
+      (WidgetTester tester) async {
+    final fakeStorage = FakeSecureStorage();
+    final authProvider = AuthProvider(storage: fakeStorage);
+    final boardsProvider = BoardsProvider(storage: fakeStorage);
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
+    final post1 = E621Post(
+      id: 8001,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'png',
+      artistTags: ['artist_a'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_a'],
+    );
+    final post2 = E621Post(
+      id: 8002,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'jpg',
+      artistTags: ['artist_b'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_b'],
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+          ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
+        ],
+        child: MaterialApp(
+          home: PostDetailPage(
+            posts: [post1, post2],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('File #8001'), findsOneWidget);
+    expect(find.byType(FullscreenMediaPage), findsNothing);
+
+    // Tap the image area cleanly to open FullscreenMediaPage
+    await tester.tap(find.byType(CircularProgressIndicator).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FullscreenMediaPage), findsOneWidget);
+    expect(find.byType(ZoomableImageView), findsOneWidget);
+    expect(find.text('File #8001'), findsWidgets);
+
+    // Double-tap the ZoomableImageView to zoom in to 2.5x
+    final viewerCenter = tester.getCenter(find.byType(ZoomableImageView));
+    await tester.tapAt(viewerCenter);
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tapAt(viewerCenter);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('2.5x'), findsOneWidget);
+
+    // Tap the zoom pill to reset zoom back to 1.0x
+    await tester.tap(find.byTooltip('Reset Zoom'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('2.5x'), findsNothing);
+
+    // Swipe left inside fullscreen to advance to the second post
+    await tester.fling(
+      find.descendant(
+        of: find.byType(FullscreenMediaPage),
+        matching: find.byType(PageView),
+      ),
+      const Offset(-500, 0),
+      1000,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('File #8002'), findsOneWidget);
+    expect(find.text('2 of 2'), findsWidgets);
+
+    // Exit fullscreen -> PostDetailPage should sync to File #8002
+    await tester.tap(find.byTooltip('Exit Fullscreen'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FullscreenMediaPage), findsNothing);
+    expect(find.text('File #8002'), findsOneWidget);
+    expect(find.text('2 of 2'), findsOneWidget);
+  });
+
+  testWidgets(
+      'Fullscreen video button hands off live controller without recreating decoder, supports speed & seek, and restores on exit',
+      (WidgetTester tester) async {
+    final fakePlatform = FakeVideoPlayerPlatform();
+    VideoPlayerPlatform.instance = fakePlatform;
+
+    final fakeStorage = FakeSecureStorage();
+    final authProvider = AuthProvider(storage: fakeStorage);
+    final boardsProvider = BoardsProvider(storage: fakeStorage);
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
+    final videoPost = E621Post(
+      id: 9001,
+      previewUrl: null,
+      fileUrl: 'https://example.com/loop.mp4',
+      extension: 'mp4',
+      artistTags: ['anim_artist'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['animated'],
+    );
+    final imagePost = E621Post(
+      id: 9002,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'png',
+      artistTags: ['still_artist'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['still'],
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+          ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
+        ],
+        child: MaterialApp(
+          home: PostDetailPage(
+            posts: [videoPost, imagePost],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump();
+
+    expect(fakePlatform.createdUrls, ['https://example.com/loop.mp4']);
+    expect(fakePlatform.activeTextureIds.length, 1);
+
+    // Tap Fullscreen button on the video overlay
+    await tester.tap(find.byTooltip('Fullscreen'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FullscreenMediaPage), findsOneWidget);
+    // Live controller handed off: no second decoder created, single active surface
+    expect(fakePlatform.createdUrls, ['https://example.com/loop.mp4']);
+    expect(fakePlatform.activeTextureIds.length, 1);
+    expect(find.byType(VideoPlayer), findsOneWidget);
+
+    // Cycle playback speed from 1x -> 1.5x
+    expect(find.text('1x'), findsOneWidget);
+    await tester.tap(find.byTooltip('Playback Speed'));
+    await tester.pump();
+    expect(find.text('1.5x'), findsOneWidget);
+    expect(fakePlatform.playbackSpeeds, contains(1.5));
+
+    // Tap Forward 5s button
+    await tester.tap(find.byTooltip('Forward 5s'));
+    await tester.pump();
+    expect(fakePlatform.seeks, contains(const Duration(seconds: 5)));
+
+    // Exit fullscreen back to PostDetailPage -> still reuses the same controller
+    await tester.tap(find.byTooltip('Exit Fullscreen').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FullscreenMediaPage), findsNothing);
+    expect(fakePlatform.createdUrls, ['https://example.com/loop.mp4']);
+    expect(fakePlatform.activeTextureIds.length, 1);
+    expect(find.byType(VideoPlayer), findsOneWidget);
+  });
+
+  testWidgets(
+      'Swiping from video to image in fullscreen disposes video decoder and syncs PostDetailPage to the image',
+      (WidgetTester tester) async {
+    final fakePlatform = FakeVideoPlayerPlatform();
+    VideoPlayerPlatform.instance = fakePlatform;
+
+    final fakeStorage = FakeSecureStorage();
+    final authProvider = AuthProvider(storage: fakeStorage);
+    final boardsProvider = BoardsProvider(storage: fakeStorage);
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
+    final videoPost = E621Post(
+      id: 9101,
+      previewUrl: null,
+      fileUrl: 'https://example.com/clip.mp4',
+      extension: 'mp4',
+      artistTags: ['anim_artist'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['animated'],
+    );
+    final imagePost = E621Post(
+      id: 9102,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'png',
+      artistTags: ['still_artist'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['still'],
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+          ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
+        ],
+        child: MaterialApp(
+          home: PostDetailPage(
+            posts: [videoPost, imagePost],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump();
+    expect(fakePlatform.activeTextureIds.length, 1);
+
+    await tester.tap(find.byTooltip('Fullscreen'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(FullscreenMediaPage), findsOneWidget);
+
+    // Swipe to image post inside fullscreen
+    await tester.fling(
+      find.descendant(
+        of: find.byType(FullscreenMediaPage),
+        matching: find.byType(PageView),
+      ),
+      const Offset(-500, 0),
+      1000,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('File #9102'), findsOneWidget);
+    expect(find.byType(ZoomableImageView), findsOneWidget);
+    expect(fakePlatform.activeTextureIds, isEmpty);
+
+    // Exit fullscreen -> PostDetailPage lands on image post 9102 with no active video
+    await tester.tap(find.byTooltip('Exit Fullscreen'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FullscreenMediaPage), findsNothing);
+    expect(find.text('File #9102'), findsOneWidget);
+    expect(fakePlatform.activeTextureIds, isEmpty);
+  });
+
+  testWidgets(
+      'Two-finger pinch in FullscreenMediaPage zooms smoothly without swiping to adjacent posts',
+      (WidgetTester tester) async {
+    final fakeStorage = FakeSecureStorage();
+    final authProvider = AuthProvider(storage: fakeStorage);
+    final boardsProvider = BoardsProvider(storage: fakeStorage);
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
+    final post1 = E621Post(
+      id: 8101,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'png',
+      artistTags: ['artist_a'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_a'],
+    );
+    final post2 = E621Post(
+      id: 8102,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'jpg',
+      artistTags: ['artist_b'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_b'],
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+          ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
+        ],
+        child: MaterialApp(
+          home: FullscreenMediaPage(
+            posts: [post1, post2],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('File #8101'), findsOneWidget);
+    expect(find.byTooltip('Reset Zoom'), findsNothing);
+
+    final center = tester.getCenter(find.byType(ZoomableImageView));
+    final g1 = await tester.startGesture(center + const Offset(-30, 0), pointer: 1);
+    final g2 = await tester.startGesture(center + const Offset(30, 0), pointer: 2);
+    await tester.pump();
+
+    for (int i = 0; i < 4; i++) {
+      await g1.moveBy(const Offset(-25, 0));
+      await g2.moveBy(const Offset(25, 0));
+      await tester.pump();
+    }
+    await g1.up();
+    await g2.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    // Should be zoomed in and still on File #8101 (never swiped to File #8102)
+    expect(find.byTooltip('Reset Zoom'), findsOneWidget);
+    expect(find.text('File #8101'), findsOneWidget);
+    expect(find.text('File #8102'), findsNothing);
+  });
+
+  testWidgets(
+      'Two-finger pinch directly on PostDetailPage image opens FullscreenMediaPage already zoomed without swiping',
+      (WidgetTester tester) async {
+    final fakeStorage = FakeSecureStorage();
+    final authProvider = AuthProvider(storage: fakeStorage);
+    final boardsProvider = BoardsProvider(storage: fakeStorage);
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
+    final post1 = E621Post(
+      id: 8201,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'png',
+      artistTags: ['artist_a'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_a'],
+    );
+    final post2 = E621Post(
+      id: 8202,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'jpg',
+      artistTags: ['artist_b'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_b'],
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+          ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
+        ],
+        child: MaterialApp(
+          home: PostDetailPage(
+            posts: [post1, post2],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('File #8201'), findsOneWidget);
+    expect(find.byType(FullscreenMediaPage), findsNothing);
+
+    final imageCenter = tester.getCenter(find.byType(CircularProgressIndicator).first);
+    final g1 = await tester.startGesture(imageCenter + const Offset(-30, 0), pointer: 1);
+    final g2 = await tester.startGesture(imageCenter + const Offset(30, 0), pointer: 2);
+    await tester.pump();
+
+    for (int i = 0; i < 4; i++) {
+      await g1.moveBy(const Offset(-25, 0));
+      await g2.moveBy(const Offset(25, 0));
+      await tester.pump();
+    }
+    await g1.up();
+    await g2.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.byType(FullscreenMediaPage), findsOneWidget);
+    expect(find.byType(ZoomableImageView), findsOneWidget);
+    expect(find.byTooltip('Reset Zoom'), findsOneWidget);
+    expect(find.text('File #8201'), findsWidgets);
+    expect(find.text('File #8202'), findsNothing);
+  });
+
+  testWidgets(
+      'Two-finger horizontal drag on PostDetailPage does not swipe posts while one-finger fling does',
+      (WidgetTester tester) async {
+    final fakeStorage = FakeSecureStorage();
+    final authProvider = AuthProvider(storage: fakeStorage);
+    final boardsProvider = BoardsProvider(storage: fakeStorage);
+    final refBoardsProvider = RefBoardsProvider(storage: fakeStorage);
+
+    final post1 = E621Post(
+      id: 8301,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'png',
+      artistTags: ['artist_a'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_a'],
+    );
+    final post2 = E621Post(
+      id: 8302,
+      previewUrl: null,
+      fileUrl: null,
+      extension: 'jpg',
+      artistTags: ['artist_b'],
+      characterTags: [],
+      speciesTags: [],
+      copyrightTags: [],
+      generalTags: ['tag_b'],
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AuthProvider>.value(value: authProvider),
+          ChangeNotifierProvider<BoardsProvider>.value(value: boardsProvider),
+          ChangeNotifierProvider<RefBoardsProvider>.value(value: refBoardsProvider),
+        ],
+        child: MaterialApp(
+          home: PostDetailPage(
+            posts: [post1, post2],
+            initialIndex: 0,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('File #8301'), findsOneWidget);
+
+    final center = tester.getCenter(find.byType(PageView));
+    final g1 = await tester.startGesture(center + const Offset(0, -30), pointer: 1);
+    final g2 = await tester.startGesture(center + const Offset(0, 30), pointer: 2);
+    await tester.pump();
+
+    for (int i = 0; i < 5; i++) {
+      await g1.moveBy(const Offset(-50, 0));
+      await g2.moveBy(const Offset(-50, 0));
+      await tester.pump();
+    }
+    await g1.up();
+    await g2.up();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // Two-finger drag must NOT advance to File #8302
+    expect(find.text('File #8301'), findsOneWidget);
+    expect(find.text('File #8302'), findsNothing);
+
+    // Single-finger fling MUST advance to File #8302
+    await tester.fling(find.byType(PageView), const Offset(-500, 0), 1000);
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.text('File #8302'), findsOneWidget);
   });
 }

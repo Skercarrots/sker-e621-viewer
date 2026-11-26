@@ -48,9 +48,19 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
     0,      0,      0,      1, 0,
   ]);
 
+  bool _readArtistMode({required bool listen}) {
+    try {
+      return Provider.of<RefBoardsProvider>(context, listen: listen).artistModeEnabled;
+    } on ProviderNotFoundException {
+      return true;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _show2DCanvasPreview =
+        widget.payload.isRefCanvas && _readArtistMode(listen: false);
     _hydrateFromApi();
   }
 
@@ -207,9 +217,21 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
     );
   }
 
+  Future<void> _handleEnableArtistModeAndSaveRefCanvas() async {
+    try {
+      await Provider.of<RefBoardsProvider>(context, listen: false)
+          .setArtistModeEnabled(true);
+    } on ProviderNotFoundException {
+      // Proceed cleanly if provider is omitted in isolated tests
+    }
+    if (!mounted) return;
+    await _handleSaveRefCanvas();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isRef = widget.payload.isRefCanvas;
+    final artistModeEnabled = _readArtistMode(listen: true);
     final accentColor = isRef ? Colors.cyanAccent : Theme.of(context).colorScheme.primary;
     final totalExpected = widget.payload.itemCount;
     final loadedCount = isRef
@@ -284,7 +306,7 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
         ],
       ),
       body: _buildBody(isRef),
-      bottomNavigationBar: _buildBottomBar(context, isRef),
+      bottomNavigationBar: _buildBottomBar(context, isRef, artistModeEnabled),
     );
   }
 
@@ -578,7 +600,11 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
     );
   }
 
-  Widget _buildBottomBar(BuildContext context, bool isRef) {
+  Widget _buildBottomBar(
+    BuildContext context,
+    bool isRef,
+    bool artistModeEnabled,
+  ) {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       decoration: BoxDecoration(
@@ -588,24 +614,75 @@ class _SharedBoardPreviewPageState extends State<SharedBoardPreviewPage> {
       child: SafeArea(
         top: false,
         child: isRef
-            ? ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.cyanAccent,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                ),
-                icon: Icon(
-                  _savedRefBoardId != null ? Icons.check_circle : Icons.draw,
-                  size: 18,
-                ),
-                label: Text(
-                  _savedRefBoardId != null
-                      ? 'Saved • Open Ref Canvas'
-                      : 'Save to Ref Canvases',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                onPressed: _isLoading ? null : _handleSaveRefCanvas,
-              )
+            ? (artistModeEnabled
+                ? ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.cyanAccent,
+                      foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                    ),
+                    icon: Icon(
+                      _savedRefBoardId != null ? Icons.check_circle : Icons.draw,
+                      size: 18,
+                    ),
+                    label: Text(
+                      _savedRefBoardId != null
+                          ? 'Saved • Open Ref Canvas'
+                          : 'Save to Ref Canvases',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    onPressed: _isLoading ? null : _handleSaveRefCanvas,
+                  )
+                : Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: BorderSide(color: Colors.grey[700]!),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                          ),
+                          icon: Icon(
+                            _savedBoardId != null
+                                ? Icons.check_circle
+                                : Icons.bookmark_add_outlined,
+                            size: 18,
+                          ),
+                          label: Text(
+                            _savedBoardId != null
+                                ? 'Open Board'
+                                : 'Save as Board',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          onPressed: (_isLoading ||
+                                  (_savedBoardId == null && _hydratedPosts.isEmpty))
+                              ? null
+                              : _handleSaveAsBoard,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.cyanAccent,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                          ),
+                          icon: const Icon(Icons.draw, size: 18),
+                          label: const Text(
+                            'Enable Artist Mode & Save',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          onPressed: _isLoading
+                              ? null
+                              : _handleEnableArtistModeAndSaveRefCanvas,
+                        ),
+                      ),
+                    ],
+                  ))
             : ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.primary,

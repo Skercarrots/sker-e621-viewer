@@ -6,22 +6,55 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/ref_board_model.dart';
 import '../models/board_model.dart';
 import '../models/post_model.dart';
+import '../services/local_data_vault.dart';
 
 class RefBoardsProvider with ChangeNotifier {
   final FlutterSecureStorage _storage;
+  final LocalDataVault? _vault;
   static const String _localStorageKey = 'ref_boards_local';
+  static const String storageKeyArtistMode = 'artist_mode_enabled';
   List<RefBoard> _refBoards = [];
+  bool _artistModeEnabled = false;
   bool _isLoading = false;
   bool _isInitialized = false;
   final Set<String> _migratedUsers = {};
 
-  RefBoardsProvider({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+  RefBoardsProvider({FlutterSecureStorage? storage, LocalDataVault? vault})
+      : _storage = storage ?? const FlutterSecureStorage(),
+        _vault = vault;
+
+  Future<String?> _readKey(String key) async {
+    if (_vault != null) {
+      final fromVault = await _vault.read(key);
+      if (fromVault != null) return fromVault;
+    }
+    return _storage.read(key: key);
+  }
+
+  Future<void> _writeKey(String key, String value) async {
+    if (_vault != null) {
+      await _vault.write(key, value);
+    } else {
+      await _storage.write(key: key, value: value);
+    }
+  }
+
+  Future<void> reloadFromStorage() => loadRefBoards();
 
   List<RefBoard> get refBoards => List.unmodifiable(_refBoards);
+  bool get artistModeEnabled => _artistModeEnabled;
   bool get isLoading => _isLoading;
   bool get isInitialized => _isInitialized;
   String get currentStorageKey => _localStorageKey;
+
+  /// Enables or disables Artist Mode (controls visibility of Ref Canvas UI).
+  /// Existing Ref Canvases remain preserved in local storage when disabled.
+  Future<void> setArtistModeEnabled(bool enabled) async {
+    if (_artistModeEnabled == enabled) return;
+    _artistModeEnabled = enabled;
+    await _writeKey(storageKeyArtistMode, enabled ? 'true' : 'false');
+    _safeNotify();
+  }
 
   void _safeNotify() {
     try {
@@ -70,6 +103,12 @@ class RefBoardsProvider with ChangeNotifier {
           if (hasChanges) {
             _refBoards.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
             await _persistBoards();
+            final storedArtistMode = await _readKey(storageKeyArtistMode);
+            if ((storedArtistMode == null || storedArtistMode.isEmpty) &&
+                _refBoards.isNotEmpty) {
+              _artistModeEnabled = true;
+              await _writeKey(storageKeyArtistMode, 'true');
+            }
             notifyListeners();
           }
           try {
@@ -84,20 +123,20 @@ class RefBoardsProvider with ChangeNotifier {
     }
   }
 
-  /// Loads reference boards from local secure storage
+  /// Loads reference boards from local storage
   Future<void> loadRefBoards() async {
     _isLoading = true;
     _safeNotify();
 
     try {
-      String? data = await _storage.read(key: _localStorageKey);
+      String? data = await _readKey(_localStorageKey);
 
       // Migration fallback: if ref_boards_local is empty, import from legacy guest storage
       if (data == null || data.isEmpty) {
-        final guestData = await _storage.read(key: 'ref_boards_guest');
+        final guestData = await _readKey('ref_boards_guest');
         if (guestData != null && guestData.isNotEmpty) {
           data = guestData;
-          await _storage.write(key: _localStorageKey, value: data);
+          await _writeKey(_localStorageKey, data);
         }
       }
 
@@ -111,6 +150,17 @@ class RefBoardsProvider with ChangeNotifier {
       } else {
         _refBoards = [];
       }
+
+      final storedArtistMode = await _readKey(storageKeyArtistMode);
+      if (storedArtistMode != null && storedArtistMode.isNotEmpty) {
+        _artistModeEnabled = storedArtistMode == 'true';
+      } else if (_refBoards.isNotEmpty) {
+        // Auto-enable for existing users who already have saved Ref Canvases.
+        _artistModeEnabled = true;
+        await _writeKey(storageKeyArtistMode, 'true');
+      } else {
+        _artistModeEnabled = false;
+      }
     } catch (e) {
       debugPrint('Error loading ref boards: $e');
       _refBoards = [];
@@ -120,11 +170,11 @@ class RefBoardsProvider with ChangeNotifier {
     }
   }
 
-  /// Persists reference boards to local secure storage
+  /// Persists reference boards to local storage
   Future<void> _persistBoards() async {
     try {
       final String encoded = jsonEncode(_refBoards.map((b) => b.toJson()).toList());
-      await _storage.write(key: _localStorageKey, value: encoded);
+      await _writeKey(_localStorageKey, encoded);
     } catch (e) {
       debugPrint('Error persisting ref boards: $e');
     }

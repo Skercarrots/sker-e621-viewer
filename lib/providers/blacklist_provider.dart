@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/collection_model.dart';
 import '../models/post_model.dart';
+import '../services/local_data_vault.dart';
 
 /// Represents a single parsed blacklist rule (one line).
 /// Multiple tags in the same line are treated as a logical AND (all must match),
@@ -116,6 +117,7 @@ class _ParsedBlacklistToken {
 /// Persists locally on device so rules remain active across guest and authenticated sessions.
 class BlacklistProvider with ChangeNotifier {
   final FlutterSecureStorage _storage;
+  final LocalDataVault? _vault;
 
   static const String storageKeyTags = 'blacklist_tags';
   static const String storageKeyEnabled = 'blacklist_enabled';
@@ -134,9 +136,26 @@ class BlacklistProvider with ChangeNotifier {
 
   List<BlacklistRule> _parsedRules = [];
 
-  BlacklistProvider({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage() {
+  BlacklistProvider({FlutterSecureStorage? storage, LocalDataVault? vault})
+      : _storage = storage ?? const FlutterSecureStorage(),
+        _vault = vault {
     _parseRules(_rawBlacklist);
+  }
+
+  Future<String?> _readKey(String key) async {
+    if (_vault != null) {
+      final fromVault = await _vault.read(key);
+      if (fromVault != null) return fromVault;
+    }
+    return _storage.read(key: key);
+  }
+
+  Future<void> _writeKey(String key, String value) async {
+    if (_vault != null) {
+      await _vault.write(key, value);
+    } else {
+      await _storage.write(key: key, value: value);
+    }
   }
 
   String get rawBlacklist => _rawBlacklist;
@@ -188,11 +207,11 @@ class BlacklistProvider with ChangeNotifier {
   Future<void> loadSettings() async {
     try {
       final results = await Future.wait([
-        _storage.read(key: storageKeyTags),
-        _storage.read(key: storageKeyEnabled),
-        _storage.read(key: storageKeyPoolPosts),
-        _storage.read(key: storageKeyHideBlacklistedPools),
-        _storage.read(key: storageKeyHideEmptyCollections),
+        _readKey(storageKeyTags),
+        _readKey(storageKeyEnabled),
+        _readKey(storageKeyPoolPosts),
+        _readKey(storageKeyHideBlacklistedPools),
+        _readKey(storageKeyHideEmptyCollections),
       ]);
 
       final savedTags = results[0];
@@ -201,45 +220,52 @@ class BlacklistProvider with ChangeNotifier {
       final savedHidePools = results[3];
       final savedHideEmpty = results[4];
 
-      final writes = <Future<void>>[];
+      final defaultWrites = <String, String>{};
 
       if (savedTags != null) {
         _rawBlacklist = savedTags;
       } else {
         _rawBlacklist = defaultBlacklist;
-        writes.add(_storage.write(key: storageKeyTags, value: defaultBlacklist));
+        defaultWrites[storageKeyTags] = defaultBlacklist;
       }
 
       if (savedEnabled != null) {
         _isEnabled = savedEnabled == 'true';
       } else {
         _isEnabled = true;
-        writes.add(_storage.write(key: storageKeyEnabled, value: 'true'));
+        defaultWrites[storageKeyEnabled] = 'true';
       }
 
       if (savedPool != null) {
         _blacklistPoolPosts = savedPool == 'true';
       } else {
         _blacklistPoolPosts = false;
-        writes.add(_storage.write(key: storageKeyPoolPosts, value: 'false'));
+        defaultWrites[storageKeyPoolPosts] = 'false';
       }
 
       if (savedHidePools != null) {
         _hideBlacklistedPools = savedHidePools == 'true';
       } else {
         _hideBlacklistedPools = false;
-        writes.add(_storage.write(key: storageKeyHideBlacklistedPools, value: 'false'));
+        defaultWrites[storageKeyHideBlacklistedPools] = 'false';
       }
 
       if (savedHideEmpty != null) {
         _hideEmptyCollections = savedHideEmpty == 'true';
       } else {
         _hideEmptyCollections = true;
-        writes.add(_storage.write(key: storageKeyHideEmptyCollections, value: 'true'));
+        defaultWrites[storageKeyHideEmptyCollections] = 'true';
       }
 
-      if (writes.isNotEmpty) {
-        await Future.wait(writes);
+      if (defaultWrites.isNotEmpty) {
+        if (_vault != null) {
+          await _vault.writeAll(defaultWrites);
+        } else {
+          await Future.wait([
+            for (final e in defaultWrites.entries)
+              _storage.write(key: e.key, value: e.value),
+          ]);
+        }
       }
 
       _parseRules(_rawBlacklist);
@@ -257,7 +283,7 @@ class BlacklistProvider with ChangeNotifier {
   Future<void> saveBlacklist(String newRawText) async {
     _rawBlacklist = newRawText;
     _parseRules(newRawText);
-    await _storage.write(key: storageKeyTags, value: newRawText);
+    await _writeKey(storageKeyTags, newRawText);
     _safeNotify();
   }
 
@@ -265,7 +291,7 @@ class BlacklistProvider with ChangeNotifier {
   Future<void> setEnabled(bool enabled) async {
     if (_isEnabled == enabled) return;
     _isEnabled = enabled;
-    await _storage.write(key: storageKeyEnabled, value: enabled ? 'true' : 'false');
+    await _writeKey(storageKeyEnabled, enabled ? 'true' : 'false');
     _safeNotify();
   }
 
@@ -273,7 +299,7 @@ class BlacklistProvider with ChangeNotifier {
   Future<void> setBlacklistPoolPosts(bool enabled) async {
     if (_blacklistPoolPosts == enabled) return;
     _blacklistPoolPosts = enabled;
-    await _storage.write(key: storageKeyPoolPosts, value: enabled ? 'true' : 'false');
+    await _writeKey(storageKeyPoolPosts, enabled ? 'true' : 'false');
     _safeNotify();
   }
 
@@ -281,9 +307,9 @@ class BlacklistProvider with ChangeNotifier {
   Future<void> setHideBlacklistedPools(bool enabled) async {
     if (_hideBlacklistedPools == enabled) return;
     _hideBlacklistedPools = enabled;
-    await _storage.write(
-      key: storageKeyHideBlacklistedPools,
-      value: enabled ? 'true' : 'false',
+    await _writeKey(
+      storageKeyHideBlacklistedPools,
+      enabled ? 'true' : 'false',
     );
     _safeNotify();
   }
@@ -292,9 +318,9 @@ class BlacklistProvider with ChangeNotifier {
   Future<void> setHideEmptyCollections(bool enabled) async {
     if (_hideEmptyCollections == enabled) return;
     _hideEmptyCollections = enabled;
-    await _storage.write(
-      key: storageKeyHideEmptyCollections,
-      value: enabled ? 'true' : 'false',
+    await _writeKey(
+      storageKeyHideEmptyCollections,
+      enabled ? 'true' : 'false',
     );
     _safeNotify();
   }
@@ -305,6 +331,55 @@ class BlacklistProvider with ChangeNotifier {
 
   Future<void> clearAll() async {
     await saveBlacklist('');
+  }
+
+  /// Checks whether an exact single-line rule exists (case-insensitive).
+  bool hasExactRule(String rule) {
+    final target = rule.trim().toLowerCase();
+    if (target.isEmpty) return false;
+    for (final line in _rawBlacklist.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty || trimmed.startsWith('#')) continue;
+      if (trimmed.toLowerCase() == target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Appends a single-line blacklist rule if not already present.
+  Future<bool> addRule(String rule) async {
+    final trimmed = rule.trim();
+    if (trimmed.isEmpty || hasExactRule(trimmed)) return false;
+
+    final current = _rawBlacklist.trimRight();
+    final updated = current.isEmpty ? trimmed : '$current\n$trimmed';
+    await saveBlacklist(updated);
+    return true;
+  }
+
+  /// Removes any exact single-line rule matching [rule] (case-insensitive).
+  Future<bool> removeExactRule(String rule) async {
+    final target = rule.trim().toLowerCase();
+    if (target.isEmpty) return false;
+
+    final lines = _rawBlacklist.split('\n');
+    final kept = <String>[];
+    bool removed = false;
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty &&
+          !trimmed.startsWith('#') &&
+          trimmed.toLowerCase() == target) {
+        removed = true;
+        continue;
+      }
+      kept.add(line);
+    }
+
+    if (!removed) return false;
+    await saveBlacklist(kept.join('\n').trimRight());
+    return true;
   }
 
   /// Checks if a post matches any active blacklist rule

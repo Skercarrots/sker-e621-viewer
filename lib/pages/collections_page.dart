@@ -7,9 +7,9 @@ import '../providers/auth_provider.dart';
 import '../providers/blacklist_provider.dart';
 import '../providers/follows_provider.dart';
 import '../services/e621_collections_api.dart';
+import '../widgets/app_options_menu_button.dart';
 import '../widgets/collection_card.dart';
 import '../widgets/collection_search_controls.dart';
-import 'settings_page.dart';
 
 class CollectionsPage extends StatefulWidget {
   const CollectionsPage({super.key});
@@ -45,15 +45,8 @@ class _CollectionsPageState extends State<CollectionsPage>
           'Pools & Sets',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsPage()),
-            ),
-          ),
+        actions: const [
+          AppOptionsMenuButton(),
         ],
         bottom: TabBar(
           controller: _tabController,

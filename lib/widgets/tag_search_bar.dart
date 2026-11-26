@@ -18,6 +18,7 @@ class TagSearchBar extends StatefulWidget {
   final TextStyle? hintStyle;
   final TagAutocompleteService? autocompleteService;
   final Duration debounceDuration;
+  final ValueChanged<TagSuggestion>? onSuggestionSelected;
 
   const TagSearchBar({
     super.key,
@@ -30,6 +31,7 @@ class TagSearchBar extends StatefulWidget {
     this.hintStyle,
     this.autocompleteService,
     this.debounceDuration = const Duration(milliseconds: 220),
+    this.onSuggestionSelected,
   });
 
   @override
@@ -198,6 +200,7 @@ class _TagSearchBarState extends State<TagSearchBar> {
     _requestId++;
     _hideOverlay();
     _focusNode.requestFocus();
+    widget.onSuggestionSelected?.call(suggestion);
   }
 
   void _submitSearch(String value) {

@@ -8,12 +8,12 @@ import '../providers/ref_boards_provider.dart';
 import '../models/post_model.dart';
 import '../models/board_model.dart';
 import '../models/ref_board_model.dart';
+import '../widgets/app_options_menu_button.dart';
 import '../widgets/tag_search_bar.dart';
 import '../widgets/board_share_sheets.dart';
 import 'details_page.dart';
 import 'board_detail_page.dart';
 import 'ref_canvas_page.dart';
-import 'settings_page.dart';
 import 'login_page.dart';
 
 class AccountPage extends StatefulWidget {
@@ -23,8 +23,10 @@ class AccountPage extends StatefulWidget {
   State<AccountPage> createState() => _AccountPageState();
 }
 
-class _AccountPageState extends State<AccountPage> with SingleTickerProviderStateMixin {
+class _AccountPageState extends State<AccountPage> with TickerProviderStateMixin {
   late TabController _tabController;
+  final List<TabController> _disposableControllers = [];
+  int _tabCount = 2;
   final ScrollController _scrollController = ScrollController();
   final ScrollController _uploadsScrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
@@ -53,10 +55,49 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
   VoidCallback? _authListener;
   AuthProvider? _authForListener;
 
+  int _desiredTabCount(bool showRefCanvas) =>
+      2 + (showRefCanvas ? 1 : 0) + (_showMyUploadsTab ? 1 : 0);
+
+  void _onTabChanged() {
+    if (_showMyUploadsTab &&
+        _tabController.index == _tabController.length - 1 &&
+        _uploadedPosts.isEmpty &&
+        !_isLoadingUploads &&
+        _hasMoreUploads) {
+      final currentAuth = Provider.of<AuthProvider>(context, listen: false);
+      if (currentAuth.isLoggedIn && currentAuth.user != null) {
+        _fetchUploads();
+      }
+    }
+  }
+
+  void _syncTabController(int newLength) {
+    if (_tabCount == newLength && _tabController.length == newLength) return;
+    final oldController = _tabController;
+    final nextIndex = oldController.index.clamp(0, newLength - 1);
+    oldController.removeListener(_onTabChanged);
+    _disposableControllers.add(oldController);
+
+    _tabCount = newLength;
+    _tabController = TabController(
+      length: newLength,
+      initialIndex: nextIndex,
+      vsync: this,
+    )..addListener(_onTabChanged);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_disposableControllers.remove(oldController)) {
+        oldController.dispose();
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: _showMyUploadsTab ? 4 : 3, vsync: this);
+    final refBoards = Provider.of<RefBoardsProvider>(context, listen: false);
+    _tabCount = _desiredTabCount(refBoards.artistModeEnabled);
+    _tabController = TabController(length: _tabCount, vsync: this);
     
     final auth = Provider.of<AuthProvider>(context, listen: false);
     _lastFavVersion = auth.favoritesUpdateTrigger;
@@ -79,18 +120,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
       }
     });
 
-    _tabController.addListener(() {
-      if (_showMyUploadsTab &&
-          _tabController.index == 3 &&
-          _uploadedPosts.isEmpty &&
-          !_isLoadingUploads &&
-          _hasMoreUploads) {
-        final currentAuth = Provider.of<AuthProvider>(context, listen: false);
-        if (currentAuth.isLoggedIn && currentAuth.user != null) {
-          _fetchUploads();
-        }
-      }
-    });
+    _tabController.addListener(_onTabChanged);
 
     _initializeData();
   }
@@ -104,7 +134,12 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
     }
     _scrollController.dispose();
     _uploadsScrollController.dispose();
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
+    for (final c in _disposableControllers) {
+      c.dispose();
+    }
+    _disposableControllers.clear();
     _searchController.dispose();
     super.dispose();
   }
@@ -365,6 +400,8 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
+    final showRefCanvas = Provider.of<RefBoardsProvider>(context).artistModeEnabled;
+    _syncTabController(_desiredTabCount(showRefCanvas));
 
     if (_lastFavVersion != authProvider.favoritesUpdateTrigger) {
       _lastFavVersion = authProvider.favoritesUpdateTrigger;
@@ -434,19 +471,12 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
           tabs: [
             const Tab(text: "Favorites"),
             const Tab(text: "Saved Boards"),
-            const Tab(text: "Ref Canvas"),
+            if (showRefCanvas) const Tab(text: "Ref Canvas"),
             if (_showMyUploadsTab) const Tab(text: "My Uploads"),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: () => Navigator.push(
-              context, 
-              MaterialPageRoute(builder: (context) => const SettingsPage())
-            ),
-          ),
+        actions: const [
+          AppOptionsMenuButton(),
         ],
       ),
       body: TabBarView(
@@ -454,7 +484,7 @@ class _AccountPageState extends State<AccountPage> with SingleTickerProviderStat
         children: [
           _buildFavsTab(authProvider),
           const _SavedBoardsTab(),
-          const _RefCanvasesTab(),
+          if (showRefCanvas) const _RefCanvasesTab(),
           if (_showMyUploadsTab) _buildUploadsTab(context, authProvider),
         ],
       ),
@@ -1121,7 +1151,7 @@ class _SavedBoardsTabState extends State<_SavedBoardsTab>
   Widget build(BuildContext context) {
     super.build(context);
     final boardsProvider = Provider.of<BoardsProvider>(context);
-    final refProvider = Provider.of<RefBoardsProvider>(context, listen: false);
+    final refProvider = Provider.of<RefBoardsProvider>(context);
 
     return _ExpandableCornerFab(
       heroTag: 'account_saved_boards_fab',
@@ -1259,16 +1289,17 @@ class _SavedBoardsTabState extends State<_SavedBoardsTab>
                               ],
                             ),
                           ),
-                          const PopupMenuItem(
-                            value: 'open_ref',
-                            child: Row(
-                              children: [
-                                Icon(Icons.draw, size: 18, color: Colors.cyanAccent),
-                                SizedBox(width: 8),
-                                Text('Open in Ref Canvas'),
-                              ],
+                          if (refProvider.artistModeEnabled)
+                            const PopupMenuItem(
+                              value: 'open_ref',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.draw, size: 18, color: Colors.cyanAccent),
+                                  SizedBox(width: 8),
+                                  Text('Open in Ref Canvas'),
+                                ],
+                              ),
                             ),
-                          ),
                           const PopupMenuItem(
                             value: 'delete',
                             child: Row(

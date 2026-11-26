@@ -5,9 +5,9 @@ import '../models/ref_board_model.dart';
 import '../models/board_model.dart';
 import '../providers/ref_boards_provider.dart';
 import '../providers/boards_provider.dart';
+import '../widgets/app_options_menu_button.dart';
 import 'ref_canvas_page.dart';
 import 'board_detail_page.dart';
-import 'settings_page.dart';
 
 class RefsStudioPage extends StatefulWidget {
   const RefsStudioPage({super.key});
@@ -133,15 +133,8 @@ class _RefsStudioPageState extends State<RefsStudioPage> with SingleTickerProvid
           'Studio & Refs',
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 19),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsPage()),
-            ),
-          ),
+        actions: const [
+          AppOptionsMenuButton(),
         ],
         bottom: TabBar(
           controller: _tabController,
